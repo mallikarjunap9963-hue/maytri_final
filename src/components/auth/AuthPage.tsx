@@ -437,12 +437,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
     try {
       const res = await ApiService.login(data.email, data.password)
       if (res.ok && res.data) {
+        const userObj = res.data?.user || res.data?.data?.user || res.data?.data
         let userName =
-          res.data.user?.first_name
-            ? `${res.data.user.first_name} ${res.data.user.last_name || ''}`.trim()
-            : ''
+          userObj?.full_name ||
+          userObj?.name ||
+          (userObj?.first_name ? `${userObj.first_name} ${userObj.last_name || ''}`.trim() : '')
 
-        const userRole = res.data.user?.role || 'Channel Partner'
+        const userRole = userObj?.role || 'Channel Partner'
         let targetView: 'kyc' | 'dashboard' = 'kyc'
 
         // Check live partner profile to determine actual full name and KYC status
@@ -468,8 +469,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
           targetView = 'kyc'
         }
 
-        if (!userName) {
-          userName = localStorage.getItem('maytri_profile_name') || localStorage.getItem('maytri_last_user_name') || 'Partner'
+        if (!userName || userName === 'Partner') {
+          userName =
+            localStorage.getItem('maytri_profile_name') ||
+            localStorage.getItem('maytri_last_user_name') ||
+            localStorage.getItem(`maytri_user_name_${data.email.toLowerCase()}`) ||
+            (data.email ? data.email.split('@')[0] : 'Partner')
+        }
+
+        if (userName && userName !== 'Partner' && !userName.includes('@')) {
+          localStorage.setItem('maytri_profile_name', userName)
+          localStorage.setItem('maytri_last_user_name', userName)
         }
 
         toast.success('Signed in Successfully!', `Welcome back, ${userName}!`)
@@ -479,7 +489,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
           onLoginSuccess(
             {
               name: userName,
-              email: res.data.user?.email || data.email,
+              email: userObj?.email || data.email,
               role: userRole,
             },
             targetView
@@ -549,6 +559,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
         const fullName = userObj
           ? `${userObj.first_name || ''} ${userObj.last_name || ''}`.trim() || `${data.first_name} ${data.last_name}`.trim()
           : `${data.first_name} ${data.last_name}`.trim()
+
+        if (fullName) {
+          localStorage.setItem('maytri_profile_name', fullName)
+          localStorage.setItem('maytri_last_user_name', fullName)
+          localStorage.setItem(`maytri_user_name_${data.email.toLowerCase()}`, fullName)
+        }
 
         setTimeout(() => {
           onLoginSuccess(

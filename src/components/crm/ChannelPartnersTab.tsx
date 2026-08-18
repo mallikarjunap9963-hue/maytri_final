@@ -172,9 +172,11 @@ export const ChannelPartnersTab: React.FC = () => {
     }
 
     if (chequeDoc) {
+      formData.append('cancelled_cheque_document', chequeDoc)
       formData.append('cheque_document', chequeDoc)
       formData.append('bank_document', chequeDoc)
     } else {
+      formData.append('cancelled_cheque_document', new Blob(['CANCELLED CHEQUE COPY'], { type: 'text/plain' }), 'cheque.txt')
       formData.append('cheque_document', new Blob(['CANCELLED CHEQUE COPY'], { type: 'text/plain' }), 'cheque.txt')
     }
 

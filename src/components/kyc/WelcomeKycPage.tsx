@@ -160,13 +160,9 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
     }
   }
 
-  // Periodic polling check every 5 seconds to auto-transition when admin approves
+  // Initial check on mount to check if partner already has a profile submitted
   useEffect(() => {
     checkPartnerProfile(false)
-    const interval = setInterval(() => {
-      checkPartnerProfile(false)
-    }, 5000)
-    return () => clearInterval(interval)
   }, [])
 
   const handleInputChange = (field: string, value: string) => {
@@ -176,8 +172,8 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
 
   const handlePanFileSelect = (file: File | null) => {
     if (!file) return
-    if (file.size > 10 * 1024 * 1024) {
-      setErrorMessage('PAN Document file size must be less than 10MB')
+    if (file.size > 2 * 1024 * 1024) {
+      setErrorMessage('PAN Document file size must be less than 2MB')
       return
     }
     setPanFile(file)
@@ -186,8 +182,8 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
 
   const handleAadharFileSelect = (file: File | null) => {
     if (!file) return
-    if (file.size > 10 * 1024 * 1024) {
-      setErrorMessage('Aadhaar Document file size must be less than 10MB')
+    if (file.size > 2 * 1024 * 1024) {
+      setErrorMessage('Aadhaar Document file size must be less than 2MB')
       return
     }
     setAadharFile(file)
@@ -196,8 +192,8 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
 
   const handleChequeFileSelect = (file: File | null) => {
     if (!file) return
-    if (file.size > 10 * 1024 * 1024) {
-      setErrorMessage('Cancelled Cheque Document file size must be less than 10MB')
+    if (file.size > 2 * 1024 * 1024) {
+      setErrorMessage('Cancelled Cheque Document file size must be less than 2MB')
       return
     }
     setChequeFile(file)
@@ -280,6 +276,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
       form.append('aadhar_document', aadharFile)
     }
     if (chequeFile) {
+      form.append('cancelled_cheque_document', chequeFile)
       form.append('cheque_document', chequeFile)
       form.append('bank_document', chequeFile)
     }
@@ -307,6 +304,17 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
   const isRejected = currentKycStatus === 'REJECTED' || currentKycStatus.includes('REJECT')
   const isSubmitted = currentKycStatus === 'SUBMITTED' || currentKycStatus === 'PENDING' || currentKycStatus === 'UNDER_REVIEW' || currentKycStatus === 'REVIEW' || (Boolean(existingProfile?.pan_number) && !isApproved && !isRejected)
   const isWaitingApproval = isSubmitted && !isApproved && !isRejected
+
+  // Periodically check for approval ONLY when KYC is submitted and awaiting admin approval
+  useEffect(() => {
+    if (!isWaitingApproval || isKycModalOpen) return
+
+    const interval = setInterval(() => {
+      checkPartnerProfile(false)
+    }, 8000)
+
+    return () => clearInterval(interval)
+  }, [isWaitingApproval, isKycModalOpen])
 
   // Sync profile details into form fields if available
   useEffect(() => {
@@ -337,25 +345,51 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
     }
   }, [isApproved])
 
-  // Resolve clean human display name from live API profile
+  // Resolve clean human display name from live API profile, cache, or auth session
   const getDisplayName = (): string => {
-    if (existingProfile?.full_name) {
+    // 1. Live profile data
+    if (existingProfile?.full_name && !existingProfile.full_name.includes('@')) {
       return existingProfile.full_name
     }
-
+    if (existingProfile?.name && !existingProfile.name.includes('@')) {
+      return existingProfile.name
+    }
     if (existingProfile?.user?.first_name || existingProfile?.user?.last_name) {
-      return `${existingProfile.user.first_name || ''} ${existingProfile.user.last_name || ''}`.trim()
+      const uName = `${existingProfile.user.first_name || ''} ${existingProfile.user.last_name || ''}`.trim()
+      if (uName && !uName.includes('@')) return uName
     }
 
-    const raw = currentUser?.name || ''
-    if (raw && !raw.includes('@')) return raw
+    // 2. Cached profile name from localStorage
+    const cachedProfileName =
+      localStorage.getItem('maytri_profile_name') ||
+      localStorage.getItem('maytri_last_user_name')
+    if (cachedProfileName && cachedProfileName !== 'Partner' && !cachedProfileName.includes('@')) {
+      return cachedProfileName
+    }
 
-    const email = currentUser?.email || ''
+    // 3. Saved user from AuthToken
+    const savedUser = AuthToken.getUser()
+    if (savedUser) {
+      const u = (savedUser as any)?.data || (savedUser as any)?.user || savedUser
+      const uName =
+        `${u.first_name || ''} ${u.last_name || ''}`.trim() ||
+        u.full_name ||
+        u.name
+      if (uName && uName !== 'Partner' && !uName.includes('@')) {
+        return uName
+      }
+    }
+
+    // 4. Current user state from props
+    const raw = currentUser?.name || ''
+    if (raw && raw !== 'Partner' && !raw.includes('@')) return raw
+
+    // 5. Clean name from email if available (e.g. pokala.reddy@gmail.com -> Pokala Reddy)
+    const email = currentUser?.email || savedUser?.email || ''
     if (email) {
       const stored =
-        localStorage.getItem(`maytri_user_name_${email.toLowerCase()}`) ||
-        localStorage.getItem('maytri_last_user_name')
-      if (stored && !stored.includes('@')) return stored
+        localStorage.getItem(`maytri_user_name_${email.toLowerCase()}`)
+      if (stored && stored !== 'Partner' && !stored.includes('@')) return stored
 
       const prefix = email.split('@')[0]
       const words = prefix.replace(/[._0-9]/g, ' ').trim().split(/\s+/).filter(Boolean)
@@ -428,9 +462,6 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
           <div className="absolute -bottom-16 -left-16 w-64 h-64 rounded-full bg-black/10 blur-2xl pointer-events-none" />
 
           <div className="relative z-10 text-center max-w-2xl mx-auto space-y-3">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 border border-white/30 text-[11px] font-extrabold backdrop-blur-md shadow-xs">
-              <Sparkles className="h-3.5 w-3.5 text-amber-300" /> Maytri Channel Partner Onboarding
-            </span>
             <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black text-white tracking-tight drop-shadow-md">
               Welcome {displayName}
             </h1>
@@ -441,20 +472,6 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
                   ? 'Your KYC application has been submitted and is currently waiting for admin approval.'
                   : 'Follow these quick steps and get your account approved to start adding leads and earn amazing benefits.'}
             </p>
-
-            {!isApproved && !isWaitingApproval && (
-              <div className="pt-2 text-center">
-                <Button
-                  type="button"
-                  onClick={() => setIsKycModalOpen(true)}
-                  className="h-11 px-7 bg-white hover:bg-slate-100 text-[#0092b3] font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl cursor-pointer gap-2 mx-auto transition-all hover:scale-105 active:scale-95"
-                >
-                  <FileText className="h-4 w-4 text-[#0092b3]" />
-                  <span>START KYC APPLICATION</span>
-                  <ArrowRight className="h-4 w-4 text-[#0092b3]" />
-                </Button>
-              </div>
-            )}
           </div>
 
           {/* 2 STEPS WORKFLOW CARDS */}
@@ -515,7 +532,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
                 {isRejected ? '2. Rejected by Admin' : isWaitingApproval ? '2. Waiting for Approval' : '2. Submit for Approval'}
               </span>
               <p className="text-[10.5px] font-medium text-slate-600 leading-snug">
-                {isRejected ? 'Action required - Contact support' : isWaitingApproval ? 'Under review by Maytri Group sales desk' : 'Verification by sales desk'}
+                {isRejected ? 'Action required - Contact support' : isWaitingApproval ? 'Under review by Admin' : 'Verification by Admin'}
               </p>
               {isWaitingApproval && (
                 <Button
@@ -691,15 +708,12 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
             <div className="border-b border-slate-100 bg-slate-50/90 px-6 sm:px-8 py-4 flex items-center justify-between gap-2 shrink-0">
               <div>
                 <DialogTitle className="text-base sm:text-lg font-black text-slate-900">
-                  Channel Partner KYC Application Form
+                  Partner KYC Verification Form
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-600 font-medium mt-0.5">
                   Please provide accurate details matching your official government identity documents
                 </DialogDescription>
               </div>
-              <span className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 px-3 py-1 rounded-full w-fit hidden sm:flex items-center gap-1">
-                <span className="text-red-500 font-black">*</span> All marked fields are mandatory
-              </span>
             </div>
 
             {/* Modal Body - Scrollable Form */}
@@ -771,7 +785,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
                       <Input
                         placeholder={
                           formData.partner_type === 'CHANNEL_PARTNER'
-                            ? 'Enter Superior Code (e.g. DEVARA9309)'
+                            ? 'Enter Superior Code'
                             : 'Disabled for CP_Head'
                         }
                         disabled={formData.partner_type === 'CP_HEAD'}
@@ -807,7 +821,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
                   <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
                     <MapPin className="h-4 w-4 text-[#0092b3]" />
                     <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                      2. Registered Address & Location Details
+                      2. Registered Address
                     </h3>
                   </div>
 
@@ -916,7 +930,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
                   <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
                     <Landmark className="h-4 w-4 text-[#0092b3]" />
                     <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                      4. Bank Account & Payout Details
+                      4. Bank Account Details
                     </h3>
                   </div>
 
@@ -1044,7 +1058,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
                             1. PAN Card Document <span className="text-red-500 font-bold ml-0.5">*</span>
                           </p>
                           <p className="text-[10px] text-slate-500 font-medium">
-                            Drag & drop or browse (Max 10MB)
+                            Drag & drop or browse (Max 2MB)
                           </p>
                         </div>
                       )}
@@ -1103,7 +1117,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
                             2. Aadhaar Card Document <span className="text-red-500 font-bold ml-0.5">*</span>
                           </p>
                           <p className="text-[10px] text-slate-500 font-medium">
-                            Drag & drop or browse (Max 10MB)
+                            Drag & drop or browse (Max 2MB)
                           </p>
                         </div>
                       )}
@@ -1162,7 +1176,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
                             3. Cancelled Cheque <span className="text-red-500 font-bold ml-0.5">*</span>
                           </p>
                           <p className="text-[10px] text-slate-500 font-medium">
-                            Drag & drop or browse (Max 10MB)
+                            Drag & drop or browse (Max 2MB)
                           </p>
                         </div>
                       )}
@@ -1174,7 +1188,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
                 <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div className="flex items-center gap-2 text-slate-600 text-xs font-medium">
                     <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0" />
-                    <span>Your documents are securely encrypted and verified per RERA standards.</span>
+                    <span>Your documents are securely encrypted.</span>
                   </div>
 
                   <div className="flex items-center gap-3 w-full sm:w-auto">

@@ -58,15 +58,46 @@ export function App() {
   useEffect(() => {
     const token = AuthToken.getAccess()
     if (token) {
+      // 0. Immediate synchronous restoration from cache to prevent name flickering
+      const savedUser = AuthToken.getUser()
+      const cachedProfileName = localStorage.getItem('maytri_profile_name') || localStorage.getItem('maytri_last_user_name')
+      if (savedUser) {
+        const u = (savedUser as any)?.data || (savedUser as any)?.user || savedUser
+        const parsedSavedName =
+          `${u.first_name || ''} ${u.last_name || ''}`.trim() ||
+          u.name ||
+          u.full_name ||
+          cachedProfileName
+        if (parsedSavedName && !parsedSavedName.includes('@')) {
+          setCurrentUser({
+            name: parsedSavedName,
+            email: u.email || '',
+            role: u.role || 'Channel Partner',
+          })
+          setIsAuthenticated(true)
+        }
+      }
+
       // 1. Fetch user account details
       ApiService.getMe().then((res) => {
         if (res.ok && res.data) {
-          const user = res.data
-          const cachedProfileName = localStorage.getItem('maytri_profile_name') || localStorage.getItem('maytri_last_user_name')
-          const parsedName = `${user.first_name || ''} ${user.last_name || ''}`.trim()
+          const user = res.data?.data || res.data?.user || res.data
+          const liveCachedName = localStorage.getItem('maytri_profile_name') || localStorage.getItem('maytri_last_user_name')
+          const parsedName =
+            `${user.first_name || ''} ${user.last_name || ''}`.trim() ||
+            user.name ||
+            user.full_name ||
+            ''
+          const finalName =
+            (liveCachedName && liveCachedName !== 'Partner' && !liveCachedName.includes('@'))
+              ? liveCachedName
+              : (parsedName && !parsedName.includes('@'))
+                ? parsedName
+                : (user.email ? user.email.split('@')[0] : 'Partner')
+
           setCurrentUser({
-            name: cachedProfileName || (parsedName && !parsedName.includes('@') ? parsedName : user.email.split('@')[0]),
-            email: user.email,
+            name: finalName,
+            email: user.email || '',
             role: user.role || 'Channel Partner',
           })
           AuthToken.setUser(user)

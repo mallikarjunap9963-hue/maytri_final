@@ -443,7 +443,23 @@ export const ApiService = {
 
   // Auth: Current User Me
   async getMe() {
-    return apiFetch<BackendUser>('/api/accounts/me')
+    const res = await apiFetch<any>('/api/accounts/me')
+    if (res.ok && res.data) {
+      const user = res.data?.data || res.data?.user || res.data
+      const name =
+        user.full_name ||
+        user.name ||
+        `${user.first_name || ''} ${user.last_name || ''}`.trim()
+      if (name && !name.includes('@')) {
+        localStorage.setItem('maytri_profile_name', name)
+        localStorage.setItem('maytri_last_user_name', name)
+      }
+      return {
+        ...res,
+        data: user,
+      }
+    }
+    return res
   },
 
   // Auth: Forgot Password
