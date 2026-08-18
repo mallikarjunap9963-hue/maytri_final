@@ -1,0 +1,692 @@
+import React, { useState, useEffect } from 'react'
+import {
+  Plus,
+  Phone,
+  Calendar,
+  Search,
+  Users,
+  LayoutDashboard,
+  Eye,
+  Edit3,
+  CheckCircle2,
+  X,
+  RefreshCw,
+  Building2,
+  Layers,
+  Filter,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import type { Lead } from '@/data/appData'
+import { ApiService } from '@/services/apiService'
+import { MiniLoader } from '@/components/common/MiniLoader'
+import { LeadsTableSkeleton } from '@/components/common/Skeletons'
+import { LeadDetailPage } from '@/components/crm/LeadDetailPage'
+import { toast } from '@/components/common/ToastNotification'
+import { cn } from '@/lib/utils'
+
+interface LeadsPipelineTabProps {
+  searchQuery?: string
+  selectedProject?: string
+  onClearProjectFilter?: () => void
+  onOpenAddLead?: (projectName?: string) => void
+  onScheduleVisitForLead?: (lead: Lead) => void
+  onNavigateToDashboard?: () => void
+  refreshKey?: number
+}
+
+const STAGES: Lead['stage'][] = [
+  'New',
+  'Contacted',
+  'Follow Up',
+  'Interested',
+  'Converted',
+  'Lost',
+]
+
+const STAGE_CONFIG: Record<
+  string,
+  { label: string; badgeClass: string }
+> = {
+  New: {
+    label: 'New',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  },
+  'New Inquiry': {
+    label: 'New',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  },
+  Contacted: {
+    label: 'Contacted',
+    badgeClass: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+  },
+  'Follow Up': {
+    label: 'Follow Up',
+    badgeClass: 'bg-purple-50 text-purple-700 border-purple-200',
+  },
+  'Site Visit Scheduled': {
+    label: 'Site Visit',
+    badgeClass: 'bg-purple-50 text-purple-700 border-purple-200',
+  },
+  Interested: {
+    label: 'Interested',
+    badgeClass: 'bg-amber-50 text-amber-700 border-amber-200',
+  },
+  'Token / Negotiation': {
+    label: 'Negotiation',
+    badgeClass: 'bg-amber-50 text-amber-700 border-amber-200',
+  },
+  'Loan Processing': {
+    label: 'Loan Processing',
+    badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  },
+  Converted: {
+    label: 'Converted',
+    badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  },
+  Booked: {
+    label: 'Booked',
+    badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  },
+  Lost: {
+    label: 'Lost',
+    badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
+  },
+}
+
+// Strict helper to match lead with project
+const isLeadMatchingProject = (lead: Lead, projectFilterName: string): boolean => {
+  if (!lead || !projectFilterName || projectFilterName === 'ALL') return true
+  const target = projectFilterName.toLowerCase().trim()
+  const leadProj = (lead.project || (lead as any).project_name || '').toLowerCase().trim()
+  if (leadProj) {
+    if (leadProj === target || leadProj.includes(target) || target.includes(leadProj)) {
+      return true
+    }
+  }
+  return false
+}
+
+export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
+  searchQuery: externalSearch = '',
+  selectedProject = 'ALL',
+  onClearProjectFilter,
+  onOpenAddLead,
+  onScheduleVisitForLead,
+  onNavigateToDashboard,
+  refreshKey,
+}) => {
+  const [leads, setLeads] = useState<Lead[]>([])
+  const [loading, setLoading] = useState<boolean>(true)
+  const [stageFilter, setStageFilter] = useState<string>('ALL')
+  const [internalSearch, setInternalSearch] = useState<string>('')
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
+  const [currentPage, setCurrentPage] = useState<number>(1)
+  const pageSize = 10
+
+  // Edit Lead Modal State
+  const [editingLead, setEditingLead] = useState<Lead | null>(null)
+  const [editStatus, setEditStatus] = useState<Lead['stage']>('New Inquiry')
+  const [editName, setEditName] = useState<string>('')
+  const [editPhone, setEditPhone] = useState<string>('')
+  const [editFollowUp, setEditFollowUp] = useState<string>('')
+  const [editNotes, setEditNotes] = useState<string>('')
+  const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false)
+
+  const isIndividualProjectMode = Boolean(selectedProject && selectedProject !== 'ALL')
+
+  const fetchLeadsData = async () => {
+    setLoading(true)
+    try {
+      const leadsData = await ApiService.getLeads().catch(() => [])
+      setLeads(leadsData || [])
+    } catch (err) {
+      console.warn('Error loading leads from backend:', err)
+      setLeads([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchLeadsData()
+  }, [refreshKey])
+
+  const effectiveSearch = (externalSearch || internalSearch).toLowerCase().trim()
+
+  // Filter leads: Strictly by selected project (if in individual mode) and search & status
+  const filteredLeads = React.useMemo(() => {
+    const seen = new Set<string>()
+    return leads
+      .filter((lead) => {
+        const cleanPhone = lead.phone ? lead.phone.replace(/[^0-9]/g, '').slice(-10) : ''
+        const key = `${lead.id}-${cleanPhone || lead.name}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      .filter((lead) => {
+        // Project matching: If individual project mode, show ONLY this project's leads
+        const matchesProject = isIndividualProjectMode
+          ? isLeadMatchingProject(lead, selectedProject)
+          : true
+
+        // Stage matching
+        const matchesStage = stageFilter === 'ALL' || lead.stage === stageFilter
+
+        // Search matching
+        const matchesSearch =
+          !effectiveSearch ||
+          lead.name.toLowerCase().includes(effectiveSearch) ||
+          lead.phone.includes(effectiveSearch) ||
+          lead.email.toLowerCase().includes(effectiveSearch) ||
+          lead.id.toLowerCase().includes(effectiveSearch) ||
+          (lead.project && lead.project.toLowerCase().includes(effectiveSearch)) ||
+          (lead.requirement && lead.requirement.toLowerCase().includes(effectiveSearch))
+
+        return matchesProject && matchesStage && matchesSearch
+      })
+  }, [leads, effectiveSearch, selectedProject, isIndividualProjectMode, stageFilter])
+
+  const totalPages = Math.ceil(filteredLeads.length / pageSize) || 1
+  const paginatedLeads = filteredLeads.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [effectiveSearch, selectedProject, stageFilter])
+
+  // Move lead stage helper and sync with backend
+  const handleMoveStage = async (leadId: string, newStage: Lead['stage']) => {
+    const targetLead = leads.find((l) => l.id === leadId)
+    setLeads((prev) =>
+      prev.map((l) =>
+        l.id === leadId
+          ? {
+              ...l,
+              stage: newStage,
+              lastActivity: `Moved stage to ${newStage}`,
+            }
+          : l
+      )
+    )
+
+    if (selectedLead && selectedLead.id === leadId) {
+      setSelectedLead((prev) => (prev ? { ...prev, stage: newStage } : null))
+    }
+
+    const numericId = targetLead?.rawId ? Number(targetLead.rawId) : Number(leadId.replace(/\D/g, ''))
+    if (numericId && !isNaN(numericId)) {
+      try {
+        await ApiService.updateLead(numericId, { status: newStage })
+        toast.success('Stage Updated', `Lead moved to "${newStage}".`)
+      } catch (err) {
+        console.warn('Failed to sync lead stage to backend:', err)
+      }
+    }
+  }
+
+  // Open Edit Modal
+  const handleOpenEdit = (lead: Lead) => {
+    setEditingLead(lead)
+    setEditStatus(lead.stage)
+    setEditName(lead.name)
+    setEditPhone(lead.phone)
+    setEditFollowUp(lead.follow_up_date || '')
+    setEditNotes(lead.requirement || lead.notes || '')
+  }
+
+  // Submit Lead Edit
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingLead) return
+    setIsSavingEdit(true)
+
+    const numericId = editingLead.rawId ? Number(editingLead.rawId) : Number(editingLead.id.replace(/\D/g, ''))
+    try {
+      if (numericId && !isNaN(numericId)) {
+        await ApiService.updateLead(numericId, {
+          status: editStatus,
+          customer_name: editName,
+          mobile: editPhone,
+          requirement: editNotes,
+        })
+      }
+
+      setLeads((prev) =>
+        prev.map((l) =>
+          l.id === editingLead.id
+            ? {
+                ...l,
+                name: editName,
+                phone: editPhone,
+                stage: editStatus,
+                requirement: editNotes,
+                notes: editNotes,
+              }
+            : l
+        )
+      )
+
+      if (selectedLead && selectedLead.id === editingLead.id) {
+        setSelectedLead((prev) =>
+          prev
+            ? {
+                ...prev,
+                name: editName,
+                phone: editPhone,
+                stage: editStatus,
+                requirement: editNotes,
+                notes: editNotes,
+              }
+            : null
+        )
+      }
+
+      toast.success('Lead Updated Successfully!', `Saved details for ${editName}.`)
+      setEditingLead(null)
+    } catch (err) {
+      console.warn('Failed to update lead:', err)
+      toast.error('Update Failed', 'Could not save lead changes. Please try again.')
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
+
+  if (loading) {
+    return <LeadsTableSkeleton />
+  }
+
+  // Render Full Page Lead Details View if a lead is selected
+  if (selectedLead) {
+    return (
+      <LeadDetailPage
+        lead={selectedLead}
+        onBack={() => setSelectedLead(null)}
+        onNavigateToDashboard={onNavigateToDashboard}
+        onUpdateLeadStage={(id, stage) => {
+          handleMoveStage(id, stage)
+        }}
+        onScheduleVisit={onScheduleVisitForLead}
+      />
+    )
+  }
+
+  return (
+    <div className="space-y-4 font-sans text-slate-800 animate-in fade-in duration-200">
+      {/* INTEGRATED CLEAN TOOLBAR */}
+      <div className="bg-white p-3.5 px-4 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {/* Left Side: Navigation & Mode Indicator */}
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+          {onNavigateToDashboard && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onNavigateToDashboard}
+              className="h-9 px-3 border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl gap-1.5 cursor-pointer shadow-2xs shrink-0"
+            >
+              <LayoutDashboard className="h-3.5 w-3.5 text-[#0092b3]" />
+              <span>Dashboard</span>
+            </Button>
+          )}
+
+          {/* If viewing individual project leads, show project badge with View All button */}
+          {isIndividualProjectMode ? (
+            <div className="flex items-center gap-2 bg-[#0092b3]/10 text-[#0092b3] px-3 py-1.5 rounded-xl border border-[#0092b3]/20">
+              <Building2 className="h-4 w-4" />
+              <span className="text-xs font-black">{selectedProject} Leads</span>
+              {onClearProjectFilter && (
+                <button
+                  onClick={onClearProjectFilter}
+                  className="ml-1 text-[11px] font-bold underline hover:text-[#007d99] cursor-pointer"
+                  title="Show all project leads"
+                >
+                  View All
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-slate-700 text-xs font-extrabold px-2">
+              <Layers className="h-4 w-4 text-[#0092b3]" />
+              <span>All Projects Pipeline</span>
+            </div>
+          )}
+
+          {/* Search Bar */}
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              value={internalSearch}
+              onChange={(e) => setInternalSearch(e.target.value)}
+              placeholder={isIndividualProjectMode ? `Search ${selectedProject} leads...` : 'Search all leads...'}
+              className="w-full h-9 pl-9 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0092b3] focus:bg-white"
+            />
+            {internalSearch && (
+              <button
+                onClick={() => setInternalSearch('')}
+                className="absolute right-3 top-2 text-xs font-bold text-slate-400 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Right Side: Status Filter, Refresh & Add Lead */}
+        <div className="flex flex-wrap items-center gap-2.5 justify-between sm:justify-end">
+          {/* Status Filter */}
+          <select
+            value={stageFilter}
+            onChange={(e) => setStageFilter(e.target.value)}
+            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0092b3] cursor-pointer shadow-2xs"
+          >
+            <option value="ALL">All Status ({filteredLeads.length})</option>
+            {STAGES.map((s) => {
+              const count = leads.filter(
+                (l) =>
+                  (isIndividualProjectMode ? isLeadMatchingProject(l, selectedProject) : true) &&
+                  l.stage === s
+              ).length
+              return (
+                <option key={s} value={s}>
+                  {s} ({count})
+                </option>
+              )
+            })}
+          </select>
+
+          {/* Refresh Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchLeadsData}
+            className="h-9 px-3 border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs gap-1.5 rounded-xl cursor-pointer shadow-2xs"
+          >
+            <RefreshCw className="h-3.5 w-3.5 text-[#0092b3]" />
+            <span>Refresh</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* LEADS TABLE */}
+      {filteredLeads.length === 0 ? (
+        <Card className="border border-slate-200 shadow-2xs bg-white rounded-2xl p-12 text-center space-y-3">
+          <div className="h-12 w-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+            <Users className="h-6 w-6" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-bold text-slate-900">
+              {isIndividualProjectMode ? `No Leads for ${selectedProject}` : 'No Prospective Buyer Leads Found'}
+            </h3>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto font-medium">
+              {effectiveSearch
+                ? 'No leads matched your search keyword.'
+                : isIndividualProjectMode
+                ? `No prospective leads have been assigned to ${selectedProject} yet.`
+                : 'No leads available across projects.'}
+            </p>
+          </div>
+        </Card>
+      ) : (
+        <Card className="rounded-2xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse min-w-[820px]">
+              <thead>
+                <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  <th className="py-4 px-6">CUSTOMER INFO</th>
+                  <th className="py-4 px-5">PROJECT</th>
+                  <th className="py-4 px-5">STATUS</th>
+                  <th className="py-4 px-5">ASSIGNED TO</th>
+                  <th className="py-4 px-5">FOLLOW UP</th>
+                  <th className="py-4 px-6 text-right">ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                {paginatedLeads.map((lead) => {
+                  const stageConfig = STAGE_CONFIG[lead.stage] || {
+                    label: lead.stage || 'New',
+                    badgeClass: 'bg-slate-100 text-slate-700 border-slate-200',
+                  }
+
+                  return (
+                    <tr
+                      key={lead.id}
+                      className="hover:bg-[#0092b3]/5 transition-colors group"
+                    >
+                      {/* CUSTOMER INFO */}
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-3">
+                          <div className="h-9 w-9 rounded-xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-black text-xs shrink-0">
+                            {lead.name
+                              .split(' ')
+                              .map((n) => n[0])
+                              .slice(0, 2)
+                              .join('')
+                              .toUpperCase()}
+                          </div>
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedLead(lead)}
+                              className="font-black text-slate-900 text-xs hover:text-[#0092b3] cursor-pointer text-left block"
+                            >
+                              {lead.name}
+                            </button>
+                            <p className="text-[11px] text-slate-500 font-medium">
+                              {lead.phone}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* PROJECT */}
+                      <td className="py-4 px-5">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-800 border border-slate-200/80">
+                          <Building2 className="h-3.5 w-3.5 text-[#0092b3]" />
+                          <span>{lead.project || 'Unassigned'}</span>
+                        </span>
+                      </td>
+
+                      {/* STATUS */}
+                      <td className="py-4 px-5">
+                        <span
+                          className={cn(
+                            'inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border',
+                            stageConfig.badgeClass
+                          )}
+                        >
+                          {stageConfig.label}
+                        </span>
+                      </td>
+
+                      {/* ASSIGNED TO */}
+                      <td className="py-4 px-5 text-xs text-slate-700 font-medium">
+                        {lead.assignedTo || lead.source || '-'}
+                      </td>
+
+                      {/* FOLLOW UP */}
+                      <td className="py-4 px-5 text-xs text-slate-700 font-medium whitespace-nowrap">
+                        {lead.follow_up_date || '-'}
+                      </td>
+
+                      {/* ACTIONS */}
+                      <td className="py-4 px-6 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLead(lead)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+                          >
+                            <Eye className="h-3.5 w-3.5 text-slate-500" />
+                            <span>View</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(lead)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0092b3] hover:bg-[#007d99] text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+                          >
+                            <Edit3 className="h-3.5 w-3.5 text-white" />
+                            <span>Edit</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* TABLE PAGINATION FOOTER */}
+          {totalPages > 1 && (
+            <div className="p-3.5 px-6 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <p className="font-medium">
+                Showing <strong className="text-slate-900">{(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, filteredLeads.length)}</strong> of <strong className="text-slate-900">{filteredLeads.length}</strong> leads
+              </p>
+              <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-2xs">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className="h-7 px-2.5 text-xs font-bold text-slate-700 disabled:opacity-40"
+                >
+                  Prev
+                </Button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`h-7 w-7 rounded-lg text-xs font-bold transition-colors ${
+                      currentPage === pageNum
+                        ? 'bg-[#0092b3] text-white shadow-xs'
+                        : 'text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className="h-7 px-2.5 text-xs font-bold text-slate-700 disabled:opacity-40"
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* EDIT LEAD MODAL */}
+      <Dialog open={!!editingLead} onOpenChange={(open) => !open && setEditingLead(null)}>
+        <DialogContent className="sm:max-w-md bg-white text-slate-900 border border-slate-200 rounded-2xl shadow-2xl p-6">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold">
+                <Edit3 className="h-4 w-4" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold text-slate-900">
+                  Edit Prospective Lead
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500">
+                  Update customer status and requirements in real-time
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <form onSubmit={handleSaveEdit} className="space-y-3.5 text-xs text-slate-800 pt-2">
+            <div>
+              <label className="font-bold text-slate-700 block mb-1">Customer Full Name</label>
+              <Input
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                required
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 block mb-1">Mobile Phone</label>
+              <Input
+                value={editPhone}
+                onChange={(e) => setEditPhone(e.target.value)}
+                required
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 block mb-1">Lead Status</label>
+              <select
+                value={editStatus}
+                onChange={(e) => setEditStatus(e.target.value as Lead['stage'])}
+                className="w-full h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold"
+              >
+                {STAGES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 block mb-1">Requirement Notes</label>
+              <textarea
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+                rows={2}
+                placeholder="Buyer preferences, unit size, budget remarks..."
+                className="w-full p-2.5 rounded-lg border border-slate-300 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-[#0092b3]"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditingLead(null)}
+                className="h-8.5 text-xs font-bold"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isSavingEdit}
+                className="h-8.5 bg-[#0092b3] hover:bg-[#007d99] text-white font-bold text-xs gap-1.5"
+              >
+                {isSavingEdit ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Saving...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Save Changes
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+export default LeadsPipelineTab
