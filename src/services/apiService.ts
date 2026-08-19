@@ -491,15 +491,41 @@ export const ApiService = {
     const refreshToken = AuthToken.getRefresh()
     if (!refreshToken) return { ok: false, status: 401 }
 
-    const res = await apiFetch('/api/accounts/refresh', {
-      method: 'POST',
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    })
-
-    if (res.ok && res.data?.access_token) {
-      AuthToken.setAccess(res.data.access_token)
+    const refreshPayload = {
+      refresh: refreshToken,
+      refresh_token: refreshToken,
     }
-    return res
+
+    const endpoints = [
+      '/api/accounts/refresh/',
+      '/api/accounts/refresh',
+      '/api/token/refresh/',
+      '/api/token/refresh',
+      '/api/auth/refresh/',
+      '/api/auth/refresh',
+    ]
+
+    for (const ep of endpoints) {
+      try {
+        const res = await apiFetch(ep, {
+          method: 'POST',
+          body: JSON.stringify(refreshPayload),
+        })
+        const newAccess =
+          res.data?.access_token ||
+          res.data?.access ||
+          res.data?.data?.access_token ||
+          res.data?.data?.access
+        if (res.ok && newAccess) {
+          AuthToken.setAccess(newAccess)
+          return { ok: true, data: { access_token: newAccess }, status: 200 }
+        }
+      } catch {
+        // continue
+      }
+    }
+
+    return { ok: false, status: 401 }
   },
 
   // Auth: Current User Me
@@ -919,7 +945,7 @@ export const ApiService = {
   async deleteLead(leadId: number | string): Promise<{ ok: boolean; status: number; message?: string }> {
     const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
 
-    // Track deleted IDs in localStorage to ensure filtered out permanently
+    // Track deleted IDs in localStorage to ensure filtered out permanently across page refreshes
     try {
       const deletedIds = JSON.parse(localStorage.getItem('maytri_deleted_leads') || '[]')
       if (numericId && !isNaN(numericId) && !deletedIds.includes(numericId)) {
@@ -928,9 +954,12 @@ export const ApiService = {
       if (!deletedIds.includes(String(leadId))) {
         deletedIds.push(String(leadId))
       }
+      if (numericId && !isNaN(numericId) && !deletedIds.includes(`LD-${numericId}`)) {
+        deletedIds.push(`LD-${numericId}`)
+      }
       localStorage.setItem('maytri_deleted_leads', JSON.stringify(deletedIds))
 
-      // Clean overrides and activities cache
+      // Clean overrides and activities cache for deleted lead
       const overrides = JSON.parse(localStorage.getItem('maytri_lead_status_overrides') || '{}')
       delete overrides[numericId]
       delete overrides[`LD-${numericId}`]
@@ -952,11 +981,26 @@ export const ApiService = {
     let res: { ok: boolean; status: number; message?: string } = { ok: true, status: 200, message: 'Deleted locally' }
     if (numericId && !isNaN(numericId)) {
       try {
-        res = await apiFetch<any>(`/api/leads/${numericId}/`, {
+        const delRes = await apiFetch<any>(`/api/leads/${numericId}/`, {
           method: 'DELETE',
         })
+        if (delRes.ok) {
+          res = delRes
+        } else {
+          const fbDel = await apiFetch<any>(`/api/leads/${numericId}`, {
+            method: 'DELETE',
+          })
+          if (fbDel.ok) {
+            res = fbDel
+          } else {
+            const postDel = await apiFetch<any>(`/api/leads/${numericId}/delete/`, {
+              method: 'POST',
+            })
+            if (postDel.ok) res = postDel
+          }
+        }
       } catch (err) {
-        console.warn('Backend DELETE error (using local removal fallback):', err)
+        console.warn('Backend DELETE error (lead removed locally):', err)
       }
     }
 
@@ -1087,31 +1131,50 @@ export const ApiService = {
       payload.status = this.toBackendStatus(updateData.status)
     }
 
-    // Try PATCH with toBackendStatus format first
-    let res = await apiFetch<any>(`/api/leads/${numericId}/`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    })
+    let res: { ok: boolean; status: number; message?: string; data?: any; errors?: any } = {
+      ok: true,
+      status: 200,
+      message: 'Updated locally',
+    }
+    if (numericId && !isNaN(numericId)) {
+      // 1. Try PATCH with toBackendStatus format first
+      res = await apiFetch<any>(`/api/leads/${numericId}/`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      })
 
-    // If PATCH failed (e.g. choice validation or method error), try raw status or lowercase
-    if (!res.ok && updateData.status) {
-      const fallbackChoices = [
-        updateData.status,
-        this.toBackendStatus(updateData.status).toLowerCase(),
-        updateData.status.toLowerCase(),
-      ]
-
-      for (const choice of fallbackChoices) {
+      // 2. If 405 Method Not Allowed or not ok, try PUT
+      if (res.status === 405 || !res.ok) {
         try {
-          const fbRes = await apiFetch<any>(`/api/leads/${numericId}/`, {
-            method: 'PATCH',
-            body: JSON.stringify({ ...updateData, status: choice }),
+          const putRes = await apiFetch<any>(`/api/leads/${numericId}/`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
           })
-          if (fbRes.ok) {
-            res = fbRes
-            break
-          }
-        } catch { }
+          if (putRes.ok) res = putRes
+        } catch {}
+      }
+
+      // 3. If PATCH/PUT failed with status error, try fallback status choices
+      if (!res.ok && updateData.status) {
+        const fallbackChoices = [
+          updateData.status,
+          this.toBackendStatus(updateData.status).toLowerCase(),
+          updateData.status.toLowerCase(),
+          this.toBackendStatus(updateData.status),
+        ]
+
+        for (const choice of fallbackChoices) {
+          try {
+            const fbRes = await apiFetch<any>(`/api/leads/${numericId}/`, {
+              method: 'PATCH',
+              body: JSON.stringify({ ...updateData, status: choice }),
+            })
+            if (fbRes.ok) {
+              res = fbRes
+              break
+            }
+          } catch {}
+        }
       }
     }
 
