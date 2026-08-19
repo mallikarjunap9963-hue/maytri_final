@@ -7,6 +7,7 @@ import {
   GitFork,
   PhoneCall,
   X,
+  LogOut,
 } from 'lucide-react'
 import { MaytriLogo } from '@/components/common/MaytriLogo'
 import { ApiService, AuthToken } from '@/services/apiService'
@@ -34,6 +35,7 @@ interface SidebarProps {
   activeLeadsCount?: number
   isMobileOpen?: boolean
   onCloseMobile?: () => void
+  onLogout?: () => void
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -41,6 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setActiveTab,
   isMobileOpen,
   onCloseMobile,
+  onLogout,
 }) => {
   const [isCpHead, setIsCpHead] = useState<boolean>(() => {
     const cachedDesig = localStorage.getItem('maytri_profile_designation')
@@ -122,7 +125,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={onCloseMobile}
-            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>
@@ -170,15 +173,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </nav>
       </div>
 
-      {/* Footer Info */}
-      <div className="border-t border-slate-200 pt-3 px-2 space-y-1">
+      {/* Footer Info & Mobile Sign Out */}
+      <div className="border-t border-slate-200 pt-3 px-1 space-y-2.5">
         <div className="flex items-center justify-between text-xs text-slate-900 font-bold">
           <span className="flex items-center gap-1.5 text-slate-900">
             <PhoneCall className="h-3.5 w-3.5 text-[#2a94b5]" /> Sales Desk
           </span>
           <span className="font-extrabold text-slate-900">040-24200456</span>
         </div>
-        <p className="text-[10px] text-slate-700 font-semibold text-center">
+
+        {onLogout && (
+          <button
+            type="button"
+            onClick={() => {
+              if (onCloseMobile) onCloseMobile()
+              onLogout()
+            }}
+            className="md:hidden w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 font-extrabold text-xs transition-colors border border-red-200 cursor-pointer"
+          >
+            <LogOut className="h-4 w-4" />
+            <span>Sign Out</span>
+          </button>
+        )}
+
+        <p className="text-[10px] text-slate-500 font-semibold text-center">
           Maytri Group v3.2
         </p>
       </div>

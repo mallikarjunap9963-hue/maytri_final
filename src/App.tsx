@@ -258,10 +258,11 @@ export function App() {
           }}
           isMobileOpen={isMobileMenuOpen}
           onCloseMobile={() => setIsMobileMenuOpen(false)}
+          onLogout={handleLogout}
         />
 
         {/* Dynamic Content Viewport */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 bg-white min-w-0">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 md:pb-6 space-y-5 bg-white min-w-0">
           {activeTab === 'overview' && (
             <OverviewTab
               onNavigateTab={(tab, project, partner) => {
@@ -373,59 +374,75 @@ export function App() {
       </div>
 
       {/* MOBILE BOTTOM NAVIGATION BAR (md:hidden) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 flex items-center justify-around shadow-lg">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-1 py-1.5 flex items-center justify-around shadow-lg">
         <button
           onClick={() => setActiveTab('overview')}
           className={cn(
-            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            'flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[9.5px] font-bold transition-all cursor-pointer',
             activeTab === 'overview' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
           )}
         >
-          <LayoutDashboard className="h-4.5 w-4.5 mb-0.5" />
+          <LayoutDashboard className="h-4 w-4 mb-0.5" />
           <span>Dashboard</span>
         </button>
 
         <button
           onClick={() => setActiveTab('projects')}
           className={cn(
-            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            'flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[9.5px] font-bold transition-all cursor-pointer',
             activeTab === 'projects' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
           )}
         >
-          <Building2 className="h-4.5 w-4.5 mb-0.5" />
+          <Building2 className="h-4 w-4 mb-0.5" />
           <span>Projects</span>
+        </button>
+
+        {/* All Leads (For CP_Head or Lead Pipeline) */}
+        <button
+          onClick={() => {
+            setSelectedProject('ALL')
+            setSelectedPartner(null)
+            setActiveTab('leads')
+          }}
+          className={cn(
+            'flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[9.5px] font-bold transition-all cursor-pointer',
+            activeTab === 'leads' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
+          )}
+        >
+          <Users className="h-4 w-4 mb-0.5" />
+          <span>All Leads</span>
         </button>
 
         <button
           onClick={() => setActiveTab('myleads')}
           className={cn(
-            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            'flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[9.5px] font-bold transition-all cursor-pointer',
             activeTab === 'myleads' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
           )}
         >
-          <UserCheck className="h-4.5 w-4.5 mb-0.5" />
+          <UserCheck className="h-4 w-4 mb-0.5" />
           <span>My Leads</span>
         </button>
 
         <button
           onClick={() => setActiveTab('team')}
           className={cn(
-            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            'flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[9.5px] font-bold transition-all cursor-pointer',
             activeTab === 'team' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
           )}
         >
-          <Users className="h-4.5 w-4.5 mb-0.5" />
+          <Users className="h-4 w-4 mb-0.5" />
           <span>My Team</span>
         </button>
 
         <button
           onClick={() => setActiveTab('tree')}
           className={cn(
-            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            'flex flex-col items-center justify-center py-1 px-1.5 rounded-xl text-[9.5px] font-bold transition-all cursor-pointer',
             activeTab === 'tree' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
           )}
         >
-          <GitFork className="h-4.5 w-4.5 mb-0.5" />
+          <GitFork className="h-4 w-4 mb-0.5" />
           <span>Network</span>
         </button>
       </nav>
