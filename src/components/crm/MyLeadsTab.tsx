@@ -280,30 +280,26 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
   // Move lead stage helper and sync with backend
   const handleMoveStage = async (leadId: string, newStage: Lead['stage']) => {
     const targetLead = leads.find((l) => l.id === leadId)
-    setLeads((prev) =>
-      prev.map((l) =>
-        l.id === leadId
-          ? {
-              ...l,
-              stage: newStage,
-              lastActivity: `Moved stage to ${newStage}`,
-            }
-          : l
-      )
-    )
-
-    if (selectedLead && selectedLead.id === leadId) {
-      setSelectedLead((prev) => (prev ? { ...prev, stage: newStage } : null))
+    const numericId = targetLead?.rawId ? Number(targetLead.rawId) : Number(leadId.replace(/\D/g, ''))
+    if (!numericId || isNaN(numericId)) {
+      toast.error('Stage Update Failed', 'Invalid lead identifier.')
+      return
     }
 
-    const numericId = targetLead?.rawId ? Number(targetLead.rawId) : Number(leadId.replace(/\D/g, ''))
-    if (numericId && !isNaN(numericId)) {
-      try {
-        await ApiService.updateLead(numericId, { status: newStage })
-        toast.success('Stage Updated', `Lead moved to "${newStage}".`)
-      } catch (err) {
-        console.warn('Failed to sync lead stage to backend:', err)
+    try {
+      const res = await ApiService.updateLead(numericId, { status: newStage })
+      if (!res.ok) {
+        throw new Error(res.message || 'Server rejected stage update')
       }
+
+      await fetchLeadsData()
+      if (selectedLead && selectedLead.id === leadId) {
+        setSelectedLead((prev) => (prev ? { ...prev, stage: newStage } : null))
+      }
+      toast.success('Stage Updated', `Lead moved to "${newStage}" in database.`)
+    } catch (err: any) {
+      console.warn('Failed to sync lead stage to backend:', err)
+      toast.error('Stage Update Failed', err.message || 'Could not sync stage change to server.')
     }
   }
 
@@ -324,30 +320,22 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
 
     const numericId = editingLead.rawId ? Number(editingLead.rawId) : Number(editingLead.id.replace(/\D/g, ''))
     try {
-      if (numericId && !isNaN(numericId)) {
-        await ApiService.updateLead(numericId, {
-          status: editStatus,
-          customer_name: editName,
-          mobile: editPhone,
-          requirement: editNotes,
-        })
+      if (!numericId || isNaN(numericId)) {
+        throw new Error('Invalid lead identifier')
       }
 
-      setLeads((prev) =>
-        prev.map((l) =>
-          l.id === editingLead.id
-            ? {
-                ...l,
-                name: editName,
-                phone: editPhone,
-                stage: editStatus,
-                requirement: editNotes,
-                notes: editNotes,
-              }
-            : l
-        )
-      )
+      const res = await ApiService.updateLead(numericId, {
+        status: editStatus,
+        customer_name: editName,
+        mobile: editPhone,
+        requirement: editNotes,
+      })
 
+      if (!res.ok) {
+        throw new Error(res.message || 'Could not save lead changes on server')
+      }
+
+      await fetchLeadsData()
       if (selectedLead && selectedLead.id === editingLead.id) {
         setSelectedLead((prev) =>
           prev
@@ -365,9 +353,9 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
 
       toast.success('Lead Updated Successfully!', `Saved details for ${editName}.`)
       setEditingLead(null)
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to update lead:', err)
-      toast.error('Update Failed', 'Could not save lead changes. Please try again.')
+      toast.error('Update Failed', err.message || 'Could not save lead changes. Please try again.')
     } finally {
       setIsSavingEdit(false)
     }
@@ -387,8 +375,8 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
         onUpdateLeadStage={(id, stage) => {
           handleMoveStage(id, stage)
         }}
-        onDeleteLead={(id) => {
-          setLeads((prev) => prev.filter((l) => l.id !== id && l.rawId !== id))
+        onDeleteLead={async () => {
+          await fetchLeadsData()
           setSelectedLead(null)
         }}
         onScheduleVisit={onScheduleVisitForLead}

@@ -115,27 +115,13 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
     setLoadingActivities(true)
     try {
       const res = await ApiService.getLeadActivities(numericId)
-      if (res.ok && Array.isArray(res.data?.items) && res.data.items.length > 0) {
+      if (res.ok && res.data?.items) {
         setActivities(res.data.items)
       } else {
-        setActivities([
-          {
-            id: 101,
-            activity_type: 'Lead Registered',
-            description: `Lead profile created for ${lead.project || 'Project'}.`,
-            created_at: lead.createdDate ? `${lead.createdDate}T10:30:00Z` : new Date().toISOString(),
-          },
-        ])
+        setActivities([])
       }
     } catch {
-      setActivities([
-        {
-          id: 101,
-          activity_type: 'Lead Registered',
-          description: `Lead profile initialized for ${lead.project || 'Project'}.`,
-          created_at: new Date().toISOString(),
-        },
-      ])
+      setActivities([])
     } finally {
       setLoadingActivities(false)
     }
@@ -144,30 +130,28 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
   const handleStageChange = async (newStage: Lead['stage']) => {
     if (newStage === currentStage || isUpdatingStage) return
     setIsUpdatingStage(true)
-    setCurrentStage(newStage)
 
     const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
     try {
-      if (numericId && !isNaN(numericId)) {
-        await ApiService.updateLead(numericId, { status: newStage })
+      if (!numericId || isNaN(numericId)) {
+        throw new Error('Invalid lead identifier')
       }
+
+      const res = await ApiService.updateLead(numericId, { status: newStage })
+      if (!res.ok) {
+        throw new Error(res.message || 'Server rejected stage update')
+      }
+
+      setCurrentStage(newStage)
       if (onUpdateLeadStage) {
         onUpdateLeadStage(lead.id, newStage)
       }
 
-      setActivities((prev) => [
-        {
-          id: Date.now(),
-          activity_type: 'Stage Changed',
-          description: `Stage upgraded to "${newStage}".`,
-          created_at: new Date().toISOString(),
-        },
-        ...prev,
-      ])
-      toast.success('Stage Updated', `Lead stage moved to "${newStage}".`)
-    } catch (err) {
+      await loadActivities()
+      toast.success('Stage Updated', `Lead stage moved to "${newStage}" in database.`)
+    } catch (err: any) {
       console.warn('Failed to update stage:', err)
-      toast.error('Stage Update Failed', 'Could not sync stage change to server.')
+      toast.error('Stage Update Failed', err.message || 'Could not sync stage change to server.')
     } finally {
       setIsUpdatingStage(false)
     }
@@ -185,59 +169,31 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
     if (!newNote.trim() || isSubmittingNote) return
     setIsSubmittingNote(true)
 
-    const notePayload = {
-      activity_type: activityType,
-      description: newNote.trim(),
-      next_followup_date: nextFollowUpDate || undefined,
-    }
-
     const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
 
     try {
-      if (numericId && !isNaN(numericId)) {
-        const res = await ApiService.addLeadNote(numericId, notePayload)
-        if (res.ok && res.data) {
-          const createdAct = res.data.data || res.data.activity || res.data
-          setActivities((prev) => [
-            {
-              id: createdAct.id || Date.now(),
-              activity_type: activityType,
-              description: newNote.trim(),
-              created_at: new Date().toISOString(),
-            },
-            ...prev,
-          ])
-        } else {
-          setActivities((prev) => [
-            {
-              id: Date.now(),
-              activity_type: activityType,
-              description: newNote.trim(),
-              created_at: new Date().toISOString(),
-            },
-            ...prev,
-          ])
-        }
-      } else {
-        setActivities((prev) => [
-          {
-            id: Date.now(),
-            activity_type: activityType,
-            description: newNote.trim(),
-            created_at: new Date().toISOString(),
-          },
-          ...prev,
-        ])
+      if (!numericId || isNaN(numericId)) {
+        throw new Error('Invalid lead identifier')
+      }
+
+      const res = await ApiService.addLeadNote(numericId, {
+        activity_type: activityType,
+        description: newNote.trim(),
+      })
+
+      if (!res.ok) {
+        throw new Error(res.message || 'Could not save note to server database')
       }
 
       setNewNote('')
       setNextFollowUpDate('')
       setNoteSuccess(true)
-      toast.success('Activity Logged', 'Note recorded to timeline.')
+      await loadActivities()
+      toast.success('Activity Logged', 'Note recorded to live timeline.')
       setTimeout(() => setNoteSuccess(false), 3000)
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Error adding lead activity note:', err)
-      toast.error('Failed to Log Note', 'Could not save note.')
+      toast.error('Failed to Log Note', err.message || 'Could not save note to server.')
     } finally {
       setIsSubmittingNote(false)
     }
@@ -254,10 +210,13 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
     const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
 
     try {
-      if (numericId && !isNaN(numericId)) {
-        await ApiService.deleteLead(numericId)
-      } else {
-        await ApiService.deleteLead(lead.id)
+      if (!numericId || isNaN(numericId)) {
+        throw new Error('Invalid lead identifier')
+      }
+
+      const res = await ApiService.deleteLead(numericId)
+      if (!res.ok) {
+        throw new Error(res.message || 'Could not delete lead from backend database')
       }
 
       toast.success('Lead Deleted', `Lead "${lead.name}" has been deleted from live database.`)
@@ -267,9 +226,9 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
       } else {
         onBack()
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to delete lead:', err)
-      toast.error('Delete Failed', 'Could not delete lead. Please try again.')
+      toast.error('Delete Failed', err.message || 'Could not delete lead from server. Please try again.')
     } finally {
       setIsDeleting(false)
     }

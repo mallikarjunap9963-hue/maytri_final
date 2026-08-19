@@ -820,14 +820,6 @@ export const ApiService = {
       (Array.isArray(res.data?.data) ? res.data.data : null) ||
       (Array.isArray(res.data) ? res.data : [])
 
-    const statusOverrides: Record<string, string> = (() => {
-      try {
-        return JSON.parse(localStorage.getItem('maytri_lead_status_overrides') || '{}')
-      } catch {
-        return {}
-      }
-    })()
-
     if (res.ok && Array.isArray(items)) {
       const mapped = items.map((l) => {
         const creatorName = l.created_by
@@ -855,11 +847,6 @@ export const ApiService = {
         }
 
         const rawBackendStage = this.normalizeLeadStage(l.status)
-        const savedOverride =
-          statusOverrides[l.id] ||
-          statusOverrides[`LD-${l.id}`] ||
-          statusOverrides[String(l.id)]
-        const leadStage = savedOverride ? this.normalizeLeadStage(savedOverride) : rawBackendStage
 
         return {
           id: `LD-${l.id}`,
@@ -875,7 +862,7 @@ export const ApiService = {
           unitType: l.requirement || '',
           requirement: l.requirement || '',
           budget: '',
-          stage: leadStage,
+          stage: rawBackendStage,
           source: creatorName || '',
           assignedTo: assigneeName || '',
           notes: l.requirement || '',
@@ -893,126 +880,60 @@ export const ApiService = {
         }
       })
 
-      // Deduplicate backend items first
-      const uniqueMapped: Lead[] = []
-      const seenBackendIds = new Set<string>()
-      const seenBackendPhones = new Set<string>()
-
-      for (const m of mapped) {
-        const cleanPhone = m.phone ? m.phone.replace(/[^0-9]/g, '').slice(-10) : ''
-        const idKey = String(m.rawId || m.id)
-        if (!seenBackendIds.has(idKey) && (!cleanPhone || !seenBackendPhones.has(cleanPhone))) {
-          seenBackendIds.add(idKey)
-          if (cleanPhone) seenBackendPhones.add(cleanPhone)
-          uniqueMapped.push(m)
-        }
-      }
-
-      // Combine with any pending local-only leads that don't match backend items
-      const localOnly = leadsData.filter((ld) => {
-        const cleanPhone = ld.phone ? ld.phone.replace(/[^0-9]/g, '').slice(-10) : ''
-        const idStr = String(ld.rawId || ld.id)
-        if (seenBackendIds.has(idStr)) return false
-        if (cleanPhone && seenBackendPhones.has(cleanPhone)) return false
-        return ld.rawId !== undefined && String(ld.rawId).startsWith('LOCAL-')
-      })
-
-      // Filter out any leads deleted by user
-      const deletedIds: (string | number)[] = (() => {
-        try {
-          return JSON.parse(localStorage.getItem('maytri_deleted_leads') || '[]')
-        } catch {
-          return []
-        }
-      })()
-
-      const deletedSet = new Set(deletedIds.map((id) => String(id)))
-
-      const finalLeads = [...uniqueMapped, ...localOnly].filter((l) => {
-        if (deletedSet.has(String(l.id)) || deletedSet.has(String(l.rawId))) return false
-        if (l.rawId && deletedSet.has(String(l.rawId))) return false
-        return true
-      })
-
-      leadsData = finalLeads
-      return finalLeads
+      leadsData = mapped
+      return mapped
     }
 
     return [...leadsData]
   },
 
-  // Leads: Delete
-  async deleteLead(leadId: number | string): Promise<{ ok: boolean; status: number; message?: string }> {
+  // Leads: Detail (GET /api/leads/{lead_id}/)
+  async getLead(leadId: number | string): Promise<{ ok: boolean; data?: Lead; status: number; message?: string }> {
     const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-
-    // Track deleted IDs in localStorage to ensure filtered out permanently across page refreshes
-    try {
-      const deletedIds = JSON.parse(localStorage.getItem('maytri_deleted_leads') || '[]')
-      if (numericId && !isNaN(numericId) && !deletedIds.includes(numericId)) {
-        deletedIds.push(numericId)
-      }
-      if (!deletedIds.includes(String(leadId))) {
-        deletedIds.push(String(leadId))
-      }
-      if (numericId && !isNaN(numericId) && !deletedIds.includes(`LD-${numericId}`)) {
-        deletedIds.push(`LD-${numericId}`)
-      }
-      localStorage.setItem('maytri_deleted_leads', JSON.stringify(deletedIds))
-
-      // Clean overrides and activities cache for deleted lead
-      const overrides = JSON.parse(localStorage.getItem('maytri_lead_status_overrides') || '{}')
-      delete overrides[numericId]
-      delete overrides[`LD-${numericId}`]
-      delete overrides[String(leadId)]
-      localStorage.setItem('maytri_lead_status_overrides', JSON.stringify(overrides))
-    } catch (e) {
-      console.warn('Failed to update local deleted leads cache:', e)
+    if (!numericId || isNaN(numericId)) {
+      return { ok: false, status: 400, message: 'Invalid lead ID' }
     }
 
-    // Immediately remove from in-memory cache
-    leadsData = leadsData.filter(
-      (l) =>
-        l.id !== leadId &&
-        l.id !== `LD-${numericId}` &&
-        l.rawId !== leadId &&
-        l.rawId !== numericId
-    )
+    const res = await apiFetch<any>(`/api/leads/${numericId}/`)
+    if (res.ok && res.data) {
+      const l: BackendLead = res.data?.data || res.data
+      const creatorName = l.created_by
+        ? `${l.created_by.first_name || ''} ${l.created_by.last_name || ''}`.trim() || l.created_by.email
+        : ''
+      const assigneeName = l.assigned_to
+        ? `${l.assigned_to.first_name || ''} ${l.assigned_to.last_name || ''}`.trim() || l.assigned_to.email
+        : ''
 
-    let res: { ok: boolean; status: number; message?: string } = { ok: true, status: 200, message: 'Deleted locally' }
-    if (numericId && !isNaN(numericId)) {
-      try {
-        const delRes = await apiFetch<any>(`/api/leads/${numericId}/`, {
-          method: 'DELETE',
-        })
-        if (delRes.ok) {
-          res = delRes
-        } else {
-          const fbDel = await apiFetch<any>(`/api/leads/${numericId}`, {
-            method: 'DELETE',
-          })
-          if (fbDel.ok) {
-            res = fbDel
-          } else {
-            const postDel = await apiFetch<any>(`/api/leads/${numericId}/delete/`, {
-              method: 'POST',
-            })
-            if (postDel.ok) res = postDel
-          }
-        }
-      } catch (err) {
-        console.warn('Backend DELETE error (lead removed locally):', err)
+      const mapped: Lead = {
+        id: `LD-${l.id}`,
+        rawId: l.id,
+        name: l.customer_name || 'Buyer',
+        phone: l.mobile || '',
+        email: l.email || '',
+        city: l.city || '',
+        project: l.project?.title || '',
+        project_id: l.project?.id,
+        partner_id: l.created_by?.id || (l as any).partner_id,
+        created_by_id: l.created_by?.id,
+        unitType: l.requirement || '',
+        requirement: l.requirement || '',
+        budget: '',
+        stage: this.normalizeLeadStage(l.status),
+        source: creatorName || '',
+        assignedTo: assigneeName || '',
+        notes: l.requirement || '',
+        createdDate: l.created_at ? l.created_at.split('T')[0] : '',
+        follow_up_date: l.follow_up_date || l.created_at || '-',
+        lastActivity: l.updated_at ? `Updated: ${l.updated_at.split('T')[0]}` : '',
       }
+
+      return { ok: true, data: mapped, status: res.status }
     }
 
-    return res
+    return { ok: false, status: res.status, message: res.message || 'Lead not found' }
   },
 
-  // Leads: Detail
-  async getLead(leadId: number) {
-    return apiFetch<BackendLead>(`/api/leads/${leadId}/`)
-  },
-
-  // Leads: Create
+  // Leads: Create (POST /api/leads/)
   async createLead(newLeadData: {
     customer_name?: string
     mobile?: string
@@ -1030,18 +951,19 @@ export const ApiService = {
     source?: string
     notes?: string
     assignedTo?: string
-  }): Promise<{ ok: boolean; data?: Lead; error?: string }> {
+  }): Promise<{ ok: boolean; data?: Lead; error?: string; status?: number }> {
     const rawMobile = newLeadData.mobile || newLeadData.phone || ''
     const cleanMobile = rawMobile.replace(/[^0-9]/g, '').slice(-10) || '9876543210'
 
     const payload: Record<string, any> = {
       customer_name: (newLeadData.customer_name || newLeadData.name || 'New Customer').trim(),
       mobile: cleanMobile,
-      city: (newLeadData.city || 'Hyderabad').trim(),
       project_id: Number(newLeadData.project_id) || 1,
-      project: Number(newLeadData.project_id) || 1,
     }
 
+    if (newLeadData.city?.trim()) {
+      payload.city = newLeadData.city.trim()
+    }
     if (newLeadData.email?.trim()) {
       payload.email = newLeadData.email.trim()
     }
@@ -1049,7 +971,6 @@ export const ApiService = {
     const reqText = (newLeadData.requirement || newLeadData.notes || newLeadData.unitType || '').trim()
     if (reqText) {
       payload.requirement = reqText
-      payload.notes = reqText
     }
 
     if (newLeadData.follow_up_date) {
@@ -1066,40 +987,33 @@ export const ApiService = {
       body: JSON.stringify(payload),
     })
 
-    const createdLead: Lead = {
-      id: res.data?.id ? `LD-${res.data.id}` : `LD-${Math.floor(1000 + Math.random() * 9000)}`,
-      rawId: res.data?.id || `LOCAL-${Date.now()}`,
-      name: res.data?.customer_name || newLeadData.name || 'New Customer',
-      phone: res.data?.mobile || newLeadData.phone || '+91 98765 43210',
-      email: res.data?.email || newLeadData.email || 'customer@example.com',
-      project: res.data?.project?.title || newLeadData.project || 'Maytri Project',
-      unitType: newLeadData.unitType || '3 BHK',
-      budget: newLeadData.budget || '₹ 1.2 - 1.5 Cr',
-      stage: this.normalizeLeadStage(res.data?.status || newLeadData.stage),
-      source: newLeadData.source || 'Channel Partner',
-      assignedTo: res.data?.assigned_to ? `${res.data.assigned_to.first_name} ${res.data.assigned_to.last_name}` : (newLeadData.assignedTo || 'Unassigned'),
-      notes: res.data?.requirement || newLeadData.notes || 'Created via Channel Partner Portal',
-      createdDate: res.data?.created_at ? res.data.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-      lastActivity: res.data?.follow_up_date ? `Follow up on ${res.data.follow_up_date.split('T')[0]}` : 'Lead registered in live backend',
+    if (res.ok && res.data) {
+      const created = res.data
+      const createdLead: Lead = {
+        id: `LD-${created.id}`,
+        rawId: created.id,
+        name: created.customer_name || payload.customer_name,
+        phone: created.mobile || payload.mobile,
+        email: created.email || payload.email || '',
+        project: created.project?.title || newLeadData.project || 'Project',
+        unitType: newLeadData.unitType || '3 BHK',
+        budget: newLeadData.budget || '₹ 1.2 - 1.5 Cr',
+        stage: this.normalizeLeadStage(created.status),
+        source: newLeadData.source || 'Channel Partner',
+        assignedTo: created.assigned_to ? `${created.assigned_to.first_name} ${created.assigned_to.last_name}` : 'Unassigned',
+        notes: created.requirement || '',
+        createdDate: created.created_at ? created.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+        lastActivity: 'Lead registered in backend database',
+      }
+
+      leadsData = [createdLead, ...leadsData.filter((l) => l.rawId !== createdLead.rawId)]
+      return { ok: true, data: createdLead, status: res.status }
     }
 
-    // Deduplicate before updating leadsData in-memory cache
-    const existingIndex = leadsData.findIndex(
-      (l) =>
-        (createdLead.rawId && l.rawId === createdLead.rawId) ||
-        (createdLead.phone && l.phone.replace(/[^0-9]/g, '').slice(-10) === cleanMobile)
-    )
-
-    if (existingIndex >= 0) {
-      leadsData[existingIndex] = createdLead
-    } else {
-      leadsData = [createdLead, ...leadsData]
-    }
-
-    return { ok: res.ok, data: createdLead, error: res.message }
+    return { ok: false, error: res.message || 'Failed to create lead on server', status: res.status }
   },
 
-  // Leads: Update
+  // Leads: Update (PATCH /api/leads/{lead_id}/)
   async updateLead(leadId: number | string, updateData: {
     customer_name?: string
     mobile?: string
@@ -1108,208 +1022,174 @@ export const ApiService = {
     requirement?: string
     status?: string
     follow_up_date?: string
-  }) {
+  }): Promise<{ ok: boolean; data?: Lead; status: number; message?: string; errors?: any }> {
     const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-
-    // Save status override to localStorage so it is 100% remembered across page refreshes
-    if (updateData.status && numericId && !isNaN(numericId)) {
-      try {
-        const overrides = JSON.parse(localStorage.getItem('maytri_lead_status_overrides') || '{}')
-        const normalized = this.normalizeLeadStage(updateData.status)
-        overrides[numericId] = normalized
-        overrides[`LD-${numericId}`] = normalized
-        overrides[String(numericId)] = normalized
-        localStorage.setItem('maytri_lead_status_overrides', JSON.stringify(overrides))
-      } catch (e) {
-        console.warn('Failed to save status override:', e)
-      }
+    if (!numericId || isNaN(numericId)) {
+      return { ok: false, status: 400, message: 'Invalid lead ID for update' }
     }
 
-    // Prepare payload with converted backend status
-    const payload: Record<string, any> = { ...updateData }
-    if (updateData.status) {
-      payload.status = this.toBackendStatus(updateData.status)
-    }
-
-    let res: { ok: boolean; status: number; message?: string; data?: any; errors?: any } = {
-      ok: true,
-      status: 200,
-      message: 'Updated locally',
-    }
-    if (numericId && !isNaN(numericId)) {
-      // 1. Try PATCH with toBackendStatus format first
-      res = await apiFetch<any>(`/api/leads/${numericId}/`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
-      })
-
-      // 2. If 405 Method Not Allowed or not ok, try PUT
-      if (res.status === 405 || !res.ok) {
+    // Prepare LeadUpdateSchema payload as defined in Swagger
+    const payload: Record<string, any> = {}
+    if (updateData.customer_name !== undefined) payload.customer_name = updateData.customer_name?.trim() || null
+    if (updateData.mobile !== undefined) payload.mobile = updateData.mobile?.replace(/[^0-9]/g, '').slice(-10) || null
+    if (updateData.email !== undefined) payload.email = updateData.email?.trim() || null
+    if (updateData.city !== undefined) payload.city = updateData.city?.trim() || null
+    if (updateData.requirement !== undefined) payload.requirement = updateData.requirement?.trim() || null
+    if (updateData.status !== undefined) payload.status = this.toBackendStatus(updateData.status)
+    if (updateData.follow_up_date !== undefined) {
+      if (updateData.follow_up_date) {
         try {
-          const putRes = await apiFetch<any>(`/api/leads/${numericId}/`, {
-            method: 'PUT',
-            body: JSON.stringify(payload),
-          })
-          if (putRes.ok) res = putRes
-        } catch {}
-      }
-
-      // 3. If PATCH/PUT failed with status error, try fallback status choices
-      if (!res.ok && updateData.status) {
-        const fallbackChoices = [
-          updateData.status,
-          this.toBackendStatus(updateData.status).toLowerCase(),
-          updateData.status.toLowerCase(),
-          this.toBackendStatus(updateData.status),
-        ]
-
-        for (const choice of fallbackChoices) {
-          try {
-            const fbRes = await apiFetch<any>(`/api/leads/${numericId}/`, {
-              method: 'PATCH',
-              body: JSON.stringify({ ...updateData, status: choice }),
-            })
-            if (fbRes.ok) {
-              res = fbRes
-              break
-            }
-          } catch {}
+          const d = new Date(updateData.follow_up_date)
+          payload.follow_up_date = !isNaN(d.getTime()) ? d.toISOString() : updateData.follow_up_date
+        } catch {
+          payload.follow_up_date = updateData.follow_up_date
         }
+      } else {
+        payload.follow_up_date = null
       }
     }
 
-    // Immediately update in-memory leadsData cache
-    leadsData = leadsData.map((l) => {
-      const match =
-        l.rawId === numericId ||
-        l.rawId === leadId ||
-        l.id === `LD-${numericId}` ||
-        l.id === String(leadId)
-
-      if (match) {
-        return {
-          ...l,
-          stage: updateData.status ? this.normalizeLeadStage(updateData.status) : l.stage,
-          name: updateData.customer_name || l.name,
-          phone: updateData.mobile || l.phone,
-          email: updateData.email || l.email,
-          notes: updateData.requirement || l.notes,
-          lastActivity: `Updated to ${updateData.status || 'new info'} on ${new Date().toISOString().split('T')[0]}`,
-        }
-      }
-      return l
+    // Call PATCH /api/leads/{lead_id}/
+    const res = await apiFetch<any>(`/api/leads/${numericId}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
     })
 
-    return res
+    if (res.ok) {
+      // Re-fetch lead from backend to ensure state matches the database exactly
+      const fetched = await this.getLead(numericId)
+      if (fetched.ok && fetched.data) {
+        leadsData = leadsData.map((l) => (l.rawId === numericId || l.id === `LD-${numericId}` ? fetched.data! : l))
+        return { ok: true, data: fetched.data, status: res.status }
+      }
+      return { ok: true, status: res.status, message: 'Lead updated successfully in database' }
+    }
+
+    return {
+      ok: false,
+      status: res.status,
+      message: res.message || 'Failed to update lead in backend database',
+      errors: res.errors,
+    }
   },
 
-  // Leads: Assign
+  // Leads: Delete (DELETE /api/leads/{lead_id}/)
+  async deleteLead(leadId: number | string): Promise<{ ok: boolean; status: number; message?: string }> {
+    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
+    if (!numericId || isNaN(numericId)) {
+      return { ok: false, status: 400, message: 'Invalid lead ID for deletion' }
+    }
+
+    // Call DELETE /api/leads/{lead_id}/ on the live backend
+    const res = await apiFetch<any>(`/api/leads/${numericId}/`, {
+      method: 'DELETE',
+    })
+
+    if (res.ok) {
+      // Only remove from in-memory cache after backend confirms successful deletion
+      leadsData = leadsData.filter((l) => l.rawId !== numericId && l.id !== `LD-${numericId}` && l.id !== String(leadId))
+      return { ok: true, status: res.status, message: 'Lead deleted from database' }
+    }
+
+    return {
+      ok: false,
+      status: res.status,
+      message: res.message || 'Failed to delete lead from server database',
+    }
+  },
+
+  // Leads: List Activities (GET /api/leads/{lead_id}/activities/)
+  async getLeadActivities(leadId: number | string, page = 1, pageSize = 50): Promise<{
+    ok: boolean
+    data?: { items: BackendLeadActivity[]; count: number }
+    status: number
+    message?: string
+  }> {
+    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
+    if (!numericId || isNaN(numericId)) {
+      return { ok: false, status: 400, message: 'Invalid lead ID', data: { items: [], count: 0 } }
+    }
+
+    const res = await apiFetch<any>(
+      `/api/leads/${numericId}/activities/?page=${page}&page_size=${pageSize}`
+    )
+
+    if (res.ok && res.data) {
+      const rawList =
+        res.data?.items ||
+        res.data?.results ||
+        res.data?.data?.items ||
+        res.data?.data?.results ||
+        (Array.isArray(res.data?.data) ? res.data.data : null) ||
+        (Array.isArray(res.data) ? res.data : [])
+
+      const mapped: BackendLeadActivity[] = (Array.isArray(rawList) ? rawList : []).map((a: any) => ({
+        id: a.id,
+        activity_type: a.activity_type || 'Note',
+        description: a.description || '',
+        old_status: a.old_status || null,
+        new_status: a.new_status || null,
+        performed_by: a.performed_by,
+        created_at: a.created_at || new Date().toISOString(),
+      }))
+
+      return {
+        ok: true,
+        status: res.status,
+        data: {
+          items: mapped,
+          count: res.data?.count !== undefined ? res.data.count : mapped.length,
+        },
+      }
+    }
+
+    return {
+      ok: false,
+      status: res.status,
+      message: res.message || 'Failed to fetch activities from server',
+      data: { items: [], count: 0 },
+    }
+  },
+
+  // Leads: Add Note / Activity (POST /api/leads/{lead_id}/activities/)
+  async addLeadNote(leadId: number | string, data: { activity_type: string; description: string }): Promise<{
+    ok: boolean
+    status: number
+    message?: string
+    data?: any
+  }> {
+    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
+    if (!numericId || isNaN(numericId)) {
+      return { ok: false, status: 400, message: 'Invalid lead ID' }
+    }
+
+    const payload = {
+      activity_type: data.activity_type || 'Note',
+      description: data.description?.trim() || '',
+    }
+
+    const res = await apiFetch<any>(`/api/leads/${numericId}/activities/`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+
+    if (res.ok) {
+      return { ok: true, status: res.status, data: res.data, message: 'Activity note recorded to database' }
+    }
+
+    return {
+      ok: false,
+      status: res.status,
+      message: res.message || 'Failed to save activity note to server database',
+    }
+  },
+
+  // Leads: Assign (POST /api/leads/{lead_id}/assign/)
   async assignLead(leadId: number, assignedToId: number) {
     return apiFetch(`/api/leads/${leadId}/assign/`, {
       method: 'POST',
       body: JSON.stringify({ assigned_to_id: assignedToId }),
     })
-  },
-
-  // Leads: List Activities
-  async getLeadActivities(leadId: number | string, page = 1, pageSize = 50) {
-    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-    const res = await apiFetch<any>(
-      `/api/leads/${numericId}/activities/?page=${page}&page_size=${pageSize}`
-    )
-
-    // Unpack all possible backend response shapes (items, results, data, or raw array)
-    const rawList =
-      res.data?.items ||
-      res.data?.results ||
-      res.data?.data?.items ||
-      res.data?.data?.results ||
-      (Array.isArray(res.data?.data) ? res.data.data : null) ||
-      (Array.isArray(res.data) ? res.data : [])
-
-    // Get any locally cached/persisted notes for this lead from localStorage
-    const localNotes: BackendLeadActivity[] = (() => {
-      try {
-        const allLocal = JSON.parse(localStorage.getItem('maytri_lead_activities_cache') || '{}')
-        return allLocal[numericId] || allLocal[`LD-${numericId}`] || allLocal[String(numericId)] || []
-      } catch {
-        return []
-      }
-    })()
-
-    // Map backend activities to standard BackendLeadActivity format
-    const mappedBackend: BackendLeadActivity[] = (Array.isArray(rawList) ? rawList : []).map((a: any, idx: number) => ({
-      id: a.id || idx + 1,
-      activity_type: a.activity_type || a.type || a.note_type || 'Note',
-      description: a.description || a.note || a.comment || a.text || 'Lead updated',
-      old_status: a.old_status,
-      new_status: a.new_status,
-      performed_by: a.performed_by || a.created_by || a.user,
-      created_at: a.created_at || a.timestamp || a.date || new Date().toISOString(),
-    }))
-
-    // Merge backend activities with local notes (avoiding duplicates by id or description)
-    const combined: BackendLeadActivity[] = [...mappedBackend]
-    for (const local of localNotes) {
-      const exists = combined.some(
-        (b) =>
-          b.id === local.id ||
-          (b.description === local.description &&
-            Math.abs(new Date(b.created_at).getTime() - new Date(local.created_at).getTime()) < 120000)
-      )
-      if (!exists) {
-        combined.unshift(local)
-      }
-    }
-
-    return {
-      ok: res.ok,
-      data: {
-        items: combined,
-        count: combined.length,
-      },
-    }
-  },
-
-  // Leads: Add Note / Activity
-  async addLeadNote(leadId: number | string, data: { activity_type: string; description: string }) {
-    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-
-    const newActivity: BackendLeadActivity = {
-      id: Date.now(),
-      activity_type: data.activity_type || 'Note',
-      description: data.description,
-      created_at: new Date().toISOString(),
-    }
-
-    // Save note to localStorage immediately so it is 100% permanent across page refreshes
-    if (numericId && !isNaN(numericId)) {
-      try {
-        const allLocal = JSON.parse(localStorage.getItem('maytri_lead_activities_cache') || '{}')
-        const currentList = allLocal[numericId] || allLocal[`LD-${numericId}`] || []
-        allLocal[numericId] = [newActivity, ...currentList]
-        allLocal[`LD-${numericId}`] = allLocal[numericId]
-        allLocal[String(numericId)] = allLocal[numericId]
-        localStorage.setItem('maytri_lead_activities_cache', JSON.stringify(allLocal))
-      } catch (e) {
-        console.warn('Failed to cache lead activity locally:', e)
-      }
-    }
-
-    // Call API with standard and fallback fields
-    const payload = {
-      activity_type: data.activity_type || 'Note',
-      description: data.description,
-      note: data.description,
-      comment: data.description,
-    }
-
-    const res = await apiFetch(`/api/leads/${numericId}/activities/`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
-
-    return res
   },
 
   // Leads: Live Dashboard & Pipeline Aggregation Analytics
