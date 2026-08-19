@@ -7,10 +7,11 @@ import type {
 } from '@/data/appData'
 import { DEFAULT_PROJECTS } from '@/data/appData'
 
+export const DIRECT_BACKEND_URL = 'https://maytri-channel-partner-backend.onrender.com'
 const RAW_ENV_URL = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim()
 
-export const API_BASE_URL = RAW_ENV_URL || ''
-export const BACKEND_MEDIA_HOST = RAW_ENV_URL || 'https://maytri-channel-partner-backend.onrender.com'
+export const API_BASE_URL = RAW_ENV_URL || DIRECT_BACKEND_URL
+export const BACKEND_MEDIA_HOST = RAW_ENV_URL || DIRECT_BACKEND_URL
 
 // Helper to build absolute media URLs for backend relative file paths (e.g. /media/...)
 export function getFullMediaUrl(path: string | null | undefined): string {
@@ -179,8 +180,6 @@ export const AuthToken = {
   setUser: (user: BackendUser) => localStorage.setItem('maytri_user', JSON.stringify(user)),
 }
 
-const DIRECT_BACKEND_URL = 'https://maytri-channel-partner-backend.onrender.com'
-
 // Reusable HTTP fetcher with Bearer Authorization, Auto Refresh, and direct fallback
 async function apiFetch<T = any>(
   endpoint: string,
@@ -227,35 +226,56 @@ async function apiFetch<T = any>(
     return { res, data }
   }
 
+  const candidates: string[] = []
+  // Direct Render backend URL
+  candidates.push(`${DIRECT_BACKEND_URL}${cleanEndpoint}`)
+  // Base URL (if different)
+  if (base && !candidates.includes(`${base}${cleanEndpoint}`)) {
+    candidates.push(`${base}${cleanEndpoint}`)
+  }
+  // Relative URL (Vercel proxy)
+  candidates.push(cleanEndpoint)
+
+  // With & without trailing slash variants
+  if (cleanEndpoint.endsWith('/')) {
+    const noSlash = cleanEndpoint.slice(0, -1)
+    candidates.push(`${DIRECT_BACKEND_URL}${noSlash}`)
+    candidates.push(noSlash)
+  } else {
+    const withSlash = `${cleanEndpoint}/`
+    candidates.push(`${DIRECT_BACKEND_URL}${withSlash}`)
+    candidates.push(withSlash)
+  }
+
+  const uniqueCandidates = Array.from(new Set(candidates))
+
   try {
     let res!: Response
     let data: any = null
+    let lastErr: any = null
+    let succeeded = false
 
-    try {
-      const result = await executeFetch(primaryUrl)
-      res = result.res
-      data = result.data
-    } catch (primaryErr) {
-      const candidates = [relativeUrl, directUrl].filter((u) => u !== primaryUrl)
-      let lastErr = primaryErr
-      let succeeded = false
-
-      for (const fbUrl of candidates) {
-        try {
-          console.warn(`[API] Call to ${primaryUrl} failed, trying fallback ${fbUrl}...`)
-          const fbResult = await executeFetch(fbUrl)
-          res = fbResult.res
-          data = fbResult.data
-          succeeded = true
-          break
-        } catch (err) {
-          lastErr = err
+    for (const targetUrl of uniqueCandidates) {
+      try {
+        const result = await executeFetch(targetUrl)
+        // If 405, 404, or 502/504 proxy errors, retry next candidate URL
+        if (result.res.status === 405 || result.res.status === 404 || result.res.status === 502 || result.res.status === 504) {
+          res = result.res
+          data = result.data
+          lastErr = new Error(`HTTP ${result.res.status} on ${targetUrl}`)
+          continue
         }
+        res = result.res
+        data = result.data
+        succeeded = true
+        break
+      } catch (err) {
+        lastErr = err
       }
+    }
 
-      if (!succeeded) {
-        throw lastErr
-      }
+    if (!succeeded && !res) {
+      throw lastErr || new Error('All backend endpoints failed')
     }
 
     if (res.status === 401 && AuthToken.getRefresh() && !endpoint.includes('/refresh')) {
@@ -975,6 +995,7 @@ export const ApiService = {
       mobile: cleanMobile,
       city: (newLeadData.city || 'Hyderabad').trim(),
       project_id: Number(newLeadData.project_id) || 1,
+      project: Number(newLeadData.project_id) || 1,
     }
 
     if (newLeadData.email?.trim()) {
@@ -984,6 +1005,7 @@ export const ApiService = {
     const reqText = (newLeadData.requirement || newLeadData.notes || newLeadData.unitType || '').trim()
     if (reqText) {
       payload.requirement = reqText
+      payload.notes = reqText
     }
 
     if (newLeadData.follow_up_date) {
