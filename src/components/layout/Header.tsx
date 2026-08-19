@@ -16,6 +16,8 @@ import type { TabType } from '@/components/layout/Sidebar'
 import { cn } from '@/lib/utils'
 import { ApiService } from '@/services/apiService'
 
+import logoPng from '@/assets/logo.png'
+
 interface HeaderProps {
   darkMode?: boolean
   setDarkMode?: (val: boolean) => void
@@ -133,15 +135,23 @@ export const Header: React.FC<HeaderProps> = ({
 
   const displayName = getDisplayName()
 
+  const userInitials = displayName
+    .split(' ')
+    .filter(Boolean)
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase() || 'P'
+
   return (
-    <header className="sticky top-0 z-40 flex h-16 sm:h-18 w-full items-center justify-between border-b border-slate-200/90 bg-white/95 backdrop-blur-md px-3 sm:px-6 md:px-8 shadow-xs">
-      {/* Brand Logo & Mobile Toggle */}
-      <div className="flex items-center gap-2 sm:gap-4">
+    <header className="sticky top-0 z-40 flex h-14 sm:h-18 w-full items-center justify-between border-b border-slate-200/90 bg-white/95 backdrop-blur-md px-2.5 sm:px-6 md:px-8 shadow-2xs">
+      {/* Brand Logo & Mobile Toggle (Left) */}
+      <div className="flex items-center gap-1.5 sm:gap-4 shrink-0">
         {onToggleMobileMenu && (
           <button
             type="button"
             onClick={onToggleMobileMenu}
-            className="md:hidden p-2 text-slate-700 hover:text-[#0092b3] hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+            className="md:hidden p-1.5 text-slate-700 hover:text-[#0092b3] hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
             title={isMobileMenuOpen ? 'Close Menu' : 'Open Navigation Menu'}
             aria-label="Toggle navigation menu"
           >
@@ -152,45 +162,68 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
         )}
-        <MaytriLogo size="md" />
+        <div className="flex items-center">
+          <img
+            src={logoPng}
+            alt="Maytri Group"
+            className="h-8 sm:h-13 w-auto object-contain shrink-0"
+            onError={(e) => {
+              ;(e.target as HTMLImageElement).src = '/maytri-logo.svg'
+            }}
+          />
+        </div>
       </div>
 
-      {/* Right Quick Actions */}
-      <div className="flex items-center gap-3">
+      {/* Right Quick Actions (Right) */}
+      <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+        {/* Add Lead Button */}
         <Button
           onClick={onOpenAddLead}
           size="sm"
-          variant="default"
-          className="gap-1.5 h-9.5 px-4 text-xs font-extrabold bg-[#0092b3] hover:bg-[#007d99] text-white shadow-sm rounded-xl cursor-pointer"
+          className="h-8 sm:h-9.5 px-2.5 sm:px-4 text-xs font-extrabold bg-[#0092b3] hover:bg-[#007d99] text-white shadow-xs rounded-xl cursor-pointer flex items-center gap-1.5"
+          title="Add New Customer Lead"
         >
-          <Plus className="h-4 w-4" />
-          <span>Add Lead</span>
+          <Plus className="h-4 w-4 shrink-0" />
+          <span className="hidden sm:inline">Add Lead</span>
         </Button>
 
-        <div className="h-6 w-px bg-slate-200 mx-1 hidden sm:block" />
+        <div className="h-6 w-px bg-slate-200 mx-0.5 hidden md:block" />
 
-        {/* User Profile Pill Widget */}
-        <div className="flex items-center rounded-2xl border border-slate-200 bg-white hover:bg-slate-50/80 px-2.5 sm:px-3.5 py-1 sm:py-1.5 shadow-2xs transition-all cursor-pointer font-outfit shrink-0">
-          {/* User Name, Code & Designation */}
+        {/* User Profile - Pill on Desktop, Initials Badge on Mobile */}
+        {/* Mobile Initials Badge (< sm) */}
+        <div
+          className="sm:hidden flex items-center justify-center h-8 w-8 rounded-xl bg-gradient-to-br from-cyan-50 to-[#0092b3]/15 border border-[#0092b3]/30 text-[#0092b3] font-black text-xs shadow-2xs shrink-0 cursor-default"
+          title={`${displayName} (${profileData?.designation || 'CP_Head'})`}
+        >
+          {userInitials}
+        </div>
+
+        {/* Desktop Profile Pill (sm+) */}
+        <div className="hidden sm:flex items-center rounded-2xl border border-slate-200 bg-white hover:bg-slate-50/80 px-3 py-1.5 shadow-2xs transition-all cursor-default font-outfit shrink-0">
           <div className="text-left leading-tight">
-            <p className="text-[11px] sm:text-xs font-black text-slate-800 tracking-tight uppercase truncate max-w-[85px] sm:max-w-[160px] md:max-w-[220px]">
+            <p className="text-xs font-black text-slate-800 tracking-tight uppercase truncate max-w-[130px] md:max-w-[200px]">
               {displayName}
             </p>
-            <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] font-bold text-slate-500 mt-0.5">
-              <span className="font-mono text-slate-600 font-semibold">{profileData?.superiorCode || localStorage.getItem('maytri_profile_code') || 'IP451201'}</span>
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mt-0.5">
+              <span className="font-mono text-slate-600 font-semibold">
+                {profileData?.superiorCode || localStorage.getItem('maytri_profile_code') || 'IP451201'}
+              </span>
               <span className="text-slate-300">•</span>
-              <span className="text-[#0092b3] font-extrabold">{profileData?.designation || localStorage.getItem('maytri_profile_designation') || currentUser?.role || 'CP_Head'}</span>
+              <span className="text-[#0092b3] font-extrabold">
+                {profileData?.designation || localStorage.getItem('maytri_profile_designation') || currentUser?.role || 'CP_Head'}
+              </span>
             </div>
           </div>
         </div>
 
+        {/* Logout Button */}
         <button
           onClick={onLogout}
-          className="h-8.5 px-2.5 sm:px-3 text-xs font-bold text-white bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-xl shadow-xs shadow-red-600/20 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+          className="h-8 w-8 sm:h-9 sm:w-auto sm:px-3 text-xs font-bold text-slate-600 hover:text-red-600 hover:bg-red-50 sm:text-white sm:bg-red-600 sm:hover:bg-red-700 sm:active:bg-red-800 rounded-xl sm:shadow-xs sm:shadow-red-600/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
           title="Sign Out"
         >
-          <LogOut className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Sign Out</span>
+          <LogOut className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+          <span className="hidden md:inline">Sign Out</span>
         </button>
       </div>
     </header>
