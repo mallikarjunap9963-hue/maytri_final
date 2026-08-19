@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import {
   Users,
-  Search,
   RefreshCw,
   Phone,
   Mail,
@@ -154,7 +153,6 @@ export const MyTeamTab: React.FC<MyTeamTabProps> = ({ onNavigateTab }) => {
   const [loading, setLoading] = useState<boolean>(true)
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('table')
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState<string>('')
   const [isCpHead, setIsCpHead] = useState<boolean>(true)
   const [partnerProfile, setPartnerProfile] = useState<{
     name: string
@@ -333,17 +331,7 @@ export const MyTeamTab: React.FC<MyTeamTabProps> = ({ onNavigateTab }) => {
     setTimeout(() => setCopiedCode(null), 2000)
   }
 
-  const filteredMembers = teamMembers.filter((m) => {
-    if (!searchQuery) return true
-    const q = searchQuery.toLowerCase()
-    return (
-      m.name.toLowerCase().includes(q) ||
-      m.code.toLowerCase().includes(q) ||
-      m.phone.toLowerCase().includes(q) ||
-      m.email.toLowerCase().includes(q) ||
-      m.city.toLowerCase().includes(q)
-    )
-  })
+  const filteredMembers = teamMembers
 
   if (loading) {
     return <TableDataSkeleton />
@@ -444,18 +432,6 @@ export const MyTeamTab: React.FC<MyTeamTabProps> = ({ onNavigateTab }) => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Search Input */}
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
-              <Input
-                type="text"
-                placeholder="Search team partners..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8.5 pr-3 h-8.5 text-xs bg-white rounded-xl border-slate-200 focus-visible:ring-[#0092b3]"
-              />
-            </div>
-
             {/* View Mode Toggle */}
             <div className="flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200">
               <button

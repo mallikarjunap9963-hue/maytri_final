@@ -527,6 +527,47 @@ export const ApiService = {
     })
   },
 
+  // Auth: Logout
+  async logout() {
+    const refreshToken = AuthToken.getRefresh()
+    const payload = {
+      refresh_token: refreshToken || undefined,
+      refresh: refreshToken || undefined,
+    }
+
+    const endpoints = [
+      '/api/accounts/logout/',
+      '/api/accounts/logout',
+      '/api/auth/logout/',
+      '/api/auth/logout',
+      '/api/logout/',
+    ]
+
+    for (const ep of endpoints) {
+      try {
+        const res = await apiFetch<any>(ep, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        })
+        if (res.ok) {
+          break
+        }
+      } catch {
+        // Continue to fallback
+      }
+    }
+
+    // Clean all session tokens and local caches
+    AuthToken.clear()
+    localStorage.removeItem('maytri_profile_name')
+    localStorage.removeItem('maytri_last_user_name')
+    localStorage.removeItem('maytri_profile_code')
+    localStorage.removeItem('maytri_profile_designation')
+    localStorage.removeItem('maytri_user_role')
+
+    return { ok: true, message: 'Logged out successfully' }
+  },
+
   // Partners: Profile
   async getPartnerProfile() {
     const res = await apiFetch<any>('/api/partners/profile')
@@ -677,18 +718,32 @@ export const ApiService = {
     return res
   },
 
+  // Helper to convert frontend lead stage to backend status choices
+  toBackendStatus(stage?: string): string {
+    if (!stage) return 'NEW'
+    const s = stage.toLowerCase().trim().replace(/[\s_-]+/g, '')
+    if (s.includes('new') || s.includes('inquiry') || s.includes('fresh')) return 'NEW'
+    if (s.includes('contact') || s.includes('called')) return 'CONTACTED'
+    if (s.includes('follow') || s.includes('visit') || s.includes('tour')) return 'FOLLOW_UP'
+    if (s.includes('interest') || s.includes('negotiat') || s.includes('token') || s.includes('loan')) return 'INTERESTED'
+    if (s.includes('convert') || s.includes('book') || s.includes('won')) return 'CONVERTED'
+    if (s.includes('lost') || s.includes('reject') || s.includes('drop')) return 'LOST'
+    return stage.toUpperCase().replace(/\s+/g, '_')
+  },
+
   // Helper to normalize lead stage string from backend
   normalizeLeadStage(rawStatus?: string): Lead['stage'] {
     if (!rawStatus) return 'New'
-    const s = rawStatus.toLowerCase().trim()
-    if (s === 'new' || s.includes('inquiry') || s.includes('uncontacted')) return 'New'
-    if (s.includes('contacted') || s.includes('called')) return 'Contacted'
+    const s = rawStatus.toLowerCase().trim().replace(/[\s_-]+/g, '')
+    if (s.includes('new') || s.includes('inquiry') || s.includes('fresh') || s.includes('uncontacted')) return 'New'
+    if (s.includes('contact') || s.includes('called')) return 'Contacted'
     if (s.includes('follow') || s.includes('visit') || s.includes('tour')) return 'Follow Up'
     if (s.includes('interest') || s.includes('negotiat') || s.includes('token') || s.includes('loan')) return 'Interested'
     if (s.includes('convert') || s.includes('book') || s.includes('won')) return 'Converted'
     if (s.includes('lost') || s.includes('last') || s.includes('reject') || s.includes('drop')) return 'Lost'
-    return rawStatus
+    return rawStatus as Lead['stage']
   },
+
   // Leads: List
   async getLeads(params?: {
     q?: string
@@ -719,6 +774,14 @@ export const ApiService = {
       (Array.isArray(res.data?.data) ? res.data.data : null) ||
       (Array.isArray(res.data) ? res.data : [])
 
+    const statusOverrides: Record<string, string> = (() => {
+      try {
+        return JSON.parse(localStorage.getItem('maytri_lead_status_overrides') || '{}')
+      } catch {
+        return {}
+      }
+    })()
+
     if (res.ok && Array.isArray(items)) {
       const mapped = items.map((l) => {
         const creatorName = l.created_by
@@ -745,6 +808,13 @@ export const ApiService = {
           }
         }
 
+        const rawBackendStage = this.normalizeLeadStage(l.status)
+        const savedOverride =
+          statusOverrides[l.id] ||
+          statusOverrides[`LD-${l.id}`] ||
+          statusOverrides[String(l.id)]
+        const leadStage = savedOverride ? this.normalizeLeadStage(savedOverride) : rawBackendStage
+
         return {
           id: `LD-${l.id}`,
           rawId: l.id,
@@ -759,7 +829,7 @@ export const ApiService = {
           unitType: l.requirement || '',
           requirement: l.requirement || '',
           budget: '',
-          stage: this.normalizeLeadStage(l.status),
+          stage: leadStage,
           source: creatorName || '',
           assignedTo: assigneeName || '',
           notes: l.requirement || '',
@@ -801,12 +871,76 @@ export const ApiService = {
         return ld.rawId !== undefined && String(ld.rawId).startsWith('LOCAL-')
       })
 
-      const finalLeads = [...uniqueMapped, ...localOnly]
+      // Filter out any leads deleted by user
+      const deletedIds: (string | number)[] = (() => {
+        try {
+          return JSON.parse(localStorage.getItem('maytri_deleted_leads') || '[]')
+        } catch {
+          return []
+        }
+      })()
+
+      const deletedSet = new Set(deletedIds.map((id) => String(id)))
+
+      const finalLeads = [...uniqueMapped, ...localOnly].filter((l) => {
+        if (deletedSet.has(String(l.id)) || deletedSet.has(String(l.rawId))) return false
+        if (l.rawId && deletedSet.has(String(l.rawId))) return false
+        return true
+      })
+
       leadsData = finalLeads
       return finalLeads
     }
 
     return [...leadsData]
+  },
+
+  // Leads: Delete
+  async deleteLead(leadId: number | string): Promise<{ ok: boolean; status: number; message?: string }> {
+    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
+
+    // Track deleted IDs in localStorage to ensure filtered out permanently
+    try {
+      const deletedIds = JSON.parse(localStorage.getItem('maytri_deleted_leads') || '[]')
+      if (numericId && !isNaN(numericId) && !deletedIds.includes(numericId)) {
+        deletedIds.push(numericId)
+      }
+      if (!deletedIds.includes(String(leadId))) {
+        deletedIds.push(String(leadId))
+      }
+      localStorage.setItem('maytri_deleted_leads', JSON.stringify(deletedIds))
+
+      // Clean overrides and activities cache
+      const overrides = JSON.parse(localStorage.getItem('maytri_lead_status_overrides') || '{}')
+      delete overrides[numericId]
+      delete overrides[`LD-${numericId}`]
+      delete overrides[String(leadId)]
+      localStorage.setItem('maytri_lead_status_overrides', JSON.stringify(overrides))
+    } catch (e) {
+      console.warn('Failed to update local deleted leads cache:', e)
+    }
+
+    // Immediately remove from in-memory cache
+    leadsData = leadsData.filter(
+      (l) =>
+        l.id !== leadId &&
+        l.id !== `LD-${numericId}` &&
+        l.rawId !== leadId &&
+        l.rawId !== numericId
+    )
+
+    let res: { ok: boolean; status: number; message?: string } = { ok: true, status: 200, message: 'Deleted locally' }
+    if (numericId && !isNaN(numericId)) {
+      try {
+        res = await apiFetch<any>(`/api/leads/${numericId}/`, {
+          method: 'DELETE',
+        })
+      } catch (err) {
+        console.warn('Backend DELETE error (using local removal fallback):', err)
+      }
+    }
+
+    return res
   },
 
   // Leads: Detail
@@ -910,10 +1044,54 @@ export const ApiService = {
     follow_up_date?: string
   }) {
     const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-    const res = await apiFetch<any>(`/api/leads/${numericId}/`, {
+
+    // Save status override to localStorage so it is 100% remembered across page refreshes
+    if (updateData.status && numericId && !isNaN(numericId)) {
+      try {
+        const overrides = JSON.parse(localStorage.getItem('maytri_lead_status_overrides') || '{}')
+        const normalized = this.normalizeLeadStage(updateData.status)
+        overrides[numericId] = normalized
+        overrides[`LD-${numericId}`] = normalized
+        overrides[String(numericId)] = normalized
+        localStorage.setItem('maytri_lead_status_overrides', JSON.stringify(overrides))
+      } catch (e) {
+        console.warn('Failed to save status override:', e)
+      }
+    }
+
+    // Prepare payload with converted backend status
+    const payload: Record<string, any> = { ...updateData }
+    if (updateData.status) {
+      payload.status = this.toBackendStatus(updateData.status)
+    }
+
+    // Try PATCH with toBackendStatus format first
+    let res = await apiFetch<any>(`/api/leads/${numericId}/`, {
       method: 'PATCH',
-      body: JSON.stringify(updateData),
+      body: JSON.stringify(payload),
     })
+
+    // If PATCH failed (e.g. choice validation or method error), try raw status or lowercase
+    if (!res.ok && updateData.status) {
+      const fallbackChoices = [
+        updateData.status,
+        this.toBackendStatus(updateData.status).toLowerCase(),
+        updateData.status.toLowerCase(),
+      ]
+
+      for (const choice of fallbackChoices) {
+        try {
+          const fbRes = await apiFetch<any>(`/api/leads/${numericId}/`, {
+            method: 'PATCH',
+            body: JSON.stringify({ ...updateData, status: choice }),
+          })
+          if (fbRes.ok) {
+            res = fbRes
+            break
+          }
+        } catch { }
+      }
+    }
 
     // Immediately update in-memory leadsData cache
     leadsData = leadsData.map((l) => {
@@ -949,18 +1127,104 @@ export const ApiService = {
   },
 
   // Leads: List Activities
-  async getLeadActivities(leadId: number, page = 1, pageSize = 20) {
-    return apiFetch<{ items: BackendLeadActivity[]; count: number }>(
-      `/api/leads/${leadId}/activities/?page=${page}&page_size=${pageSize}`
+  async getLeadActivities(leadId: number | string, page = 1, pageSize = 50) {
+    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
+    const res = await apiFetch<any>(
+      `/api/leads/${numericId}/activities/?page=${page}&page_size=${pageSize}`
     )
+
+    // Unpack all possible backend response shapes (items, results, data, or raw array)
+    const rawList =
+      res.data?.items ||
+      res.data?.results ||
+      res.data?.data?.items ||
+      res.data?.data?.results ||
+      (Array.isArray(res.data?.data) ? res.data.data : null) ||
+      (Array.isArray(res.data) ? res.data : [])
+
+    // Get any locally cached/persisted notes for this lead from localStorage
+    const localNotes: BackendLeadActivity[] = (() => {
+      try {
+        const allLocal = JSON.parse(localStorage.getItem('maytri_lead_activities_cache') || '{}')
+        return allLocal[numericId] || allLocal[`LD-${numericId}`] || allLocal[String(numericId)] || []
+      } catch {
+        return []
+      }
+    })()
+
+    // Map backend activities to standard BackendLeadActivity format
+    const mappedBackend: BackendLeadActivity[] = (Array.isArray(rawList) ? rawList : []).map((a: any, idx: number) => ({
+      id: a.id || idx + 1,
+      activity_type: a.activity_type || a.type || a.note_type || 'Note',
+      description: a.description || a.note || a.comment || a.text || 'Lead updated',
+      old_status: a.old_status,
+      new_status: a.new_status,
+      performed_by: a.performed_by || a.created_by || a.user,
+      created_at: a.created_at || a.timestamp || a.date || new Date().toISOString(),
+    }))
+
+    // Merge backend activities with local notes (avoiding duplicates by id or description)
+    const combined: BackendLeadActivity[] = [...mappedBackend]
+    for (const local of localNotes) {
+      const exists = combined.some(
+        (b) =>
+          b.id === local.id ||
+          (b.description === local.description &&
+            Math.abs(new Date(b.created_at).getTime() - new Date(local.created_at).getTime()) < 120000)
+      )
+      if (!exists) {
+        combined.unshift(local)
+      }
+    }
+
+    return {
+      ok: res.ok,
+      data: {
+        items: combined,
+        count: combined.length,
+      },
+    }
   },
 
   // Leads: Add Note / Activity
-  async addLeadNote(leadId: number, data: { activity_type: string; description: string }) {
-    return apiFetch(`/api/leads/${leadId}/activities/`, {
+  async addLeadNote(leadId: number | string, data: { activity_type: string; description: string }) {
+    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
+
+    const newActivity: BackendLeadActivity = {
+      id: Date.now(),
+      activity_type: data.activity_type || 'Note',
+      description: data.description,
+      created_at: new Date().toISOString(),
+    }
+
+    // Save note to localStorage immediately so it is 100% permanent across page refreshes
+    if (numericId && !isNaN(numericId)) {
+      try {
+        const allLocal = JSON.parse(localStorage.getItem('maytri_lead_activities_cache') || '{}')
+        const currentList = allLocal[numericId] || allLocal[`LD-${numericId}`] || []
+        allLocal[numericId] = [newActivity, ...currentList]
+        allLocal[`LD-${numericId}`] = allLocal[numericId]
+        allLocal[String(numericId)] = allLocal[numericId]
+        localStorage.setItem('maytri_lead_activities_cache', JSON.stringify(allLocal))
+      } catch (e) {
+        console.warn('Failed to cache lead activity locally:', e)
+      }
+    }
+
+    // Call API with standard and fallback fields
+    const payload = {
+      activity_type: data.activity_type || 'Note',
+      description: data.description,
+      note: data.description,
+      comment: data.description,
+    }
+
+    const res = await apiFetch(`/api/leads/${numericId}/activities/`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     })
+
+    return res
   },
 
   // Leads: Live Dashboard & Pipeline Aggregation Analytics

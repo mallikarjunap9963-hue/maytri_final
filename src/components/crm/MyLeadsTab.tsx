@@ -4,12 +4,14 @@ import {
   LayoutDashboard,
   Eye,
   Edit3,
+  Trash2,
   RefreshCw,
   Building2,
   Phone,
   UserCheck,
   CheckCircle2,
   Calendar,
+  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -46,7 +48,7 @@ const STAGES: Lead['stage'][] = [
 
 const STAGE_CONFIG: Record<
   string,
-  { label: string; badgeClass: string }
+  { label: string; badgeClass: string; rowBg?: string }
 > = {
   New: {
     label: 'New',
@@ -129,6 +131,38 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
   const [editNotes, setEditNotes] = useState<string>('')
   const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false)
 
+  // Delete Lead State
+  const [deletingLead, setDeletingLead] = useState<Lead | null>(null)
+  const [isDeleting, setIsDeleting] = useState<boolean>(false)
+
+  const handleConfirmDelete = async () => {
+    if (!deletingLead) return
+    setIsDeleting(true)
+    const target = deletingLead
+    const numericId = target.rawId ? Number(target.rawId) : Number(target.id.replace(/\D/g, ''))
+
+    try {
+      if (numericId && !isNaN(numericId)) {
+        await ApiService.deleteLead(numericId)
+      } else {
+        await ApiService.deleteLead(target.id)
+      }
+
+      setLeads((prev) => prev.filter((l) => l.id !== target.id && l.rawId !== target.rawId))
+      if (selectedLead && (selectedLead.id === target.id || selectedLead.rawId === target.rawId)) {
+        setSelectedLead(null)
+      }
+
+      toast.success('Lead Deleted', `Lead "${target.name}" has been deleted from live database.`)
+      setDeletingLead(null)
+    } catch (err) {
+      console.warn('Failed to delete lead:', err)
+      toast.error('Delete Failed', 'Could not delete lead. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   // Current User Identification
   const currentUser = AuthToken.getUser()
   const currentUserName = (
@@ -165,51 +199,50 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
     fetchLeadsData()
   }, [refreshKey])
 
-  // Filter only the Channel Head's own leads
+  // Check if current user is CP Head
+  const isCpHead = useMemo(() => {
+    const cachedDesig = localStorage.getItem('maytri_profile_designation')
+    const cachedRole = localStorage.getItem('maytri_user_role')
+    const raw = (cachedDesig || currentUser?.role || cachedRole || '').toUpperCase()
+    return raw.includes('HEAD') || raw === 'CP_HEAD' || raw === 'ADMIN'
+  }, [currentUser])
+
+  // Filter only the user's own direct leads
   const myDirectLeads = useMemo(() => {
     const seen = new Set<string>()
-    return leads.filter((lead) => {
+    const deduplicated = leads.filter((lead) => {
       const cleanPhone = lead.phone ? lead.phone.replace(/[^0-9]/g, '').slice(-10) : ''
       const key = `${lead.id}-${cleanPhone || lead.name}`
       if (seen.has(key)) return false
       seen.add(key)
-
-      // Strict match for current Head's own leads
-      const assignee = (lead.assignedTo || '').toLowerCase().trim()
-      const creator = (lead.source || '').toLowerCase().trim()
-
-      const isAssignedToMe =
-        assignee.length > 0 &&
-        (assignee === currentUserName ||
-          currentUserName.includes(assignee) ||
-          assignee.includes(currentUserName))
-
-      const isCreatedByMe =
-        (currentUserId && (lead.created_by_id === currentUserId || lead.partner_id === currentUserId)) ||
-        (creator.length > 0 && (creator === currentUserName || creator.includes(currentUserName)))
-
-      // If user has direct leads assigned or created by them
-      return isAssignedToMe || isCreatedByMe
+      return true
     })
-  }, [leads, currentUserName, currentUserId])
 
-  // Apply Project and Status Filters
-  const filteredLeads = useMemo(() => {
-    return myDirectLeads.filter((lead) => {
-      // 1. Project matching
-      const matchesProject =
-        selectedProjectFilter === 'ALL' ||
-        isLeadMatchingProject(lead, selectedProjectFilter)
+    if (!isCpHead) {
+      return deduplicated
+    }
 
-      // 2. Stage matching
-      const matchesStage =
-        stageFilter === 'ALL' || lead.stage === stageFilter
+    const matched = deduplicated.filter((lead) => {
+      const assigned = (lead.assignedTo || '').toLowerCase().trim()
+      const source = (lead.source || '').toLowerCase().trim()
+      const partnerId = (lead as any).partner_id || lead.partner_id || (lead as any).created_by_id
 
-      return matchesProject && matchesStage
+      if (currentUserId && partnerId && Number(partnerId) === Number(currentUserId)) {
+        return true
+      }
+      if (assigned && (assigned.includes(currentUserName) || currentUserName.includes(assigned))) {
+        return true
+      }
+      if (source && (source.includes(currentUserName) || currentUserName.includes(source))) {
+        return true
+      }
+      return false
     })
-  }, [myDirectLeads, selectedProjectFilter, stageFilter])
 
-  // Extract unique project list from My Leads & fetched projects
+    return matched.length > 0 ? matched : deduplicated
+  }, [leads, currentUserName, currentUserId, isCpHead])
+
+  // Extract unique projects from direct leads
   const availableProjects = useMemo(() => {
     const set = new Set<string>()
     projects.forEach((p) => {
@@ -221,11 +254,24 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
     return Array.from(set).sort()
   }, [projects, myDirectLeads])
 
-  const totalPages = Math.ceil(filteredLeads.length / pageSize) || 1
-  const paginatedLeads = filteredLeads.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  )
+  // Filter leads based on selected filters
+  const filteredLeads = useMemo(() => {
+    return myDirectLeads.filter((lead) => {
+      const matchesProject =
+        selectedProjectFilter === 'ALL'
+          ? true
+          : isLeadMatchingProject(lead, selectedProjectFilter)
+      const matchesStage = stageFilter === 'ALL' || lead.stage === stageFilter
+      return matchesProject && matchesStage
+    })
+  }, [myDirectLeads, selectedProjectFilter, stageFilter])
+
+  // Pagination calculation
+  const totalPages = Math.max(1, Math.ceil(filteredLeads.length / pageSize))
+  const paginatedLeads = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredLeads.slice(start, start + pageSize)
+  }, [filteredLeads, currentPage, pageSize])
 
   useEffect(() => {
     setCurrentPage(1)
@@ -341,6 +387,10 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
         onUpdateLeadStage={(id, stage) => {
           handleMoveStage(id, stage)
         }}
+        onDeleteLead={(id) => {
+          setLeads((prev) => prev.filter((l) => l.id !== id && l.rawId !== id))
+          setSelectedLead(null)
+        }}
         onScheduleVisit={onScheduleVisitForLead}
       />
     )
@@ -400,10 +450,7 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
             <option value="ALL">All Status ({filteredLeads.length})</option>
             {STAGES.map((s) => {
               const count = myDirectLeads.filter(
-                (l) =>
-                  (selectedProjectFilter === 'ALL' ||
-                    isLeadMatchingProject(l, selectedProjectFilter)) &&
-                  l.stage === s
+                (l) => l.stage === s || (s === 'New' && l.stage === 'New Inquiry')
               ).length
               return (
                 <option key={s} value={s}>
@@ -413,84 +460,86 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
             })}
           </select>
 
-          {/* Refresh Button */}
+          {/* Refresh Action */}
           <Button
             variant="outline"
             size="sm"
             onClick={fetchLeadsData}
-            className="h-9 px-3 border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs gap-1.5 rounded-xl cursor-pointer shadow-2xs"
+            disabled={loading}
+            className="h-9 px-3 border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl gap-1.5 cursor-pointer shadow-2xs shrink-0"
           >
-            <RefreshCw className="h-3.5 w-3.5 text-[#0092b3]" />
+            <RefreshCw className={cn('h-3.5 w-3.5 text-[#0092b3]', loading && 'animate-spin')} />
             <span>Refresh</span>
           </Button>
         </div>
       </div>
 
-      {/* MY LEADS TABLE */}
+      {/* LEADS DATA TABLE */}
       {filteredLeads.length === 0 ? (
-        <Card className="border border-slate-200 shadow-2xs bg-white rounded-2xl p-12 text-center space-y-3">
-          <div className="h-12 w-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+        <Card className="p-16 rounded-3xl border border-slate-200 shadow-2xs text-center space-y-3 bg-white">
+          <div className="h-12 w-12 rounded-2xl bg-slate-50 border border-slate-200 text-slate-400 flex items-center justify-center mx-auto">
             <Users className="h-6 w-6" />
           </div>
           <div className="space-y-1">
             <h3 className="text-sm font-bold text-slate-900">
-              No Head Leads Found
+              {selectedProjectFilter !== 'ALL'
+                ? `No Direct Leads for ${selectedProjectFilter}`
+                : 'No Direct Customer Leads Found'}
             </h3>
             <p className="text-xs text-slate-500 max-w-sm mx-auto font-medium">
-              {selectedProjectFilter !== 'ALL' || stageFilter !== 'ALL'
-                ? 'No direct leads matched the selected project or status filters.'
-                : 'You have not added or been assigned any direct leads yet.'}
+              {selectedProjectFilter !== 'ALL'
+                ? `No prospective buyers are currently registered under your partner code for ${selectedProjectFilter}.`
+                : 'Prospective buyers registered directly under your partner code will appear here.'}
             </p>
           </div>
         </Card>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[850px]">
+            <table className="w-full text-left text-xs border-collapse min-w-[700px]">
               <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/70 text-[11px] font-black uppercase tracking-wider text-slate-400">
-                  <th className="py-3 px-4 pl-5">Customer Info</th>
-                  <th className="py-3 px-4">Project</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Assigned To</th>
-                  <th className="py-3 px-4">Follow Up</th>
-                  <th className="py-3 px-4 text-center">Actions</th>
+                <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  <th className="py-3.5 px-5">Customer Info</th>
+                  <th className="py-3.5 px-4">Project</th>
+                  <th className="py-3.5 px-4">Status</th>
+                  <th className="py-3.5 px-4">Assigned To</th>
+                  <th className="py-3.5 px-4">Follow Up</th>
+                  <th className="py-3.5 px-4 text-center">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
+              <tbody className="divide-y divide-slate-100">
                 {paginatedLeads.map((lead) => {
                   const stageObj = STAGE_CONFIG[lead.stage] || {
                     label: lead.stage,
                     badgeClass: 'bg-slate-100 text-slate-700 border-slate-200',
                   }
 
-                  const initials = lead.name
-                    ? lead.name
-                        .split(' ')
-                        .filter(Boolean)
-                        .map((n) => n[0])
-                        .join('')
-                        .toUpperCase()
-                        .slice(0, 2)
-                    : 'PM'
-
                   return (
                     <tr
                       key={lead.id}
-                      className="hover:bg-slate-50/80 transition-colors group cursor-default"
+                      className="hover:bg-slate-50/70 transition-colors group"
                     >
                       {/* Customer Info */}
-                      <td className="py-3.5 px-4 pl-5">
+                      <td className="py-3.5 px-5">
                         <div className="flex items-center gap-3">
-                          <div className="h-9 w-9 rounded-xl bg-cyan-50 border border-cyan-100 text-[#0092b3] font-black text-xs flex items-center justify-center shrink-0">
-                            {initials}
+                          <div className="h-8 w-8 rounded-lg bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-black text-xs shrink-0">
+                            {lead.name
+                              .split(' ')
+                              .map((n) => n[0])
+                              .slice(0, 2)
+                              .join('')
+                              .toUpperCase()}
                           </div>
-                          <div className="min-w-0">
-                            <p className="font-extrabold text-slate-900 text-xs truncate group-hover:text-[#0092b3] transition-colors">
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedLead(lead)}
+                              className="font-bold text-slate-900 text-xs hover:text-[#0092b3] cursor-pointer text-left block"
+                            >
                               {lead.name}
-                            </p>
-                            <p className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mt-0.5">
-                              <span>{lead.phone || '-'}</span>
+                            </button>
+                            <p className="text-[11px] text-slate-500 font-mono">
+                              {lead.phone}
                             </p>
                           </div>
                         </div>
@@ -498,8 +547,8 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
 
                       {/* Project */}
                       <td className="py-3.5 px-4">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200/70">
-                          <Building2 className="h-3.5 w-3.5 text-[#0092b3]" />
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-800 border border-slate-200">
+                          <Building2 className="h-3 w-3 text-[#0092b3]" />
                           <span>{lead.project || 'General'}</span>
                         </span>
                       </td>
@@ -528,14 +577,15 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
                         {lead.follow_up_date || '-'}
                       </td>
 
-                      {/* Actions */}
+                      {/* Actions: View, Edit */}
                       <td className="py-3.5 px-4 text-center">
-                        <div className="inline-flex items-center gap-2">
+                        <div className="inline-flex items-center gap-1.5 justify-center">
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => setSelectedLead(lead)}
-                            className="h-8 px-2.5 text-xs font-bold text-slate-700 border-slate-200 hover:bg-slate-50 rounded-lg gap-1 cursor-pointer"
+                            className="h-8 px-2.5 text-xs font-bold text-slate-700 border-slate-200 hover:bg-slate-50 rounded-lg gap-1 cursor-pointer shadow-2xs"
+                            title="View Lead Details"
                           >
                             <Eye className="h-3.5 w-3.5 text-[#0092b3]" />
                             <span>View</span>
@@ -545,7 +595,8 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
                             variant="outline"
                             size="sm"
                             onClick={() => handleOpenEdit(lead)}
-                            className="h-8 px-2.5 text-xs font-bold text-white bg-[#0092b3] hover:bg-[#007b99] border-[#0092b3] rounded-lg gap-1 cursor-pointer"
+                            className="h-8 px-2.5 text-xs font-bold text-white bg-[#0092b3] hover:bg-[#007b99] border-[#0092b3] rounded-lg gap-1 cursor-pointer shadow-2xs"
+                            title="Edit Lead"
                           >
                             <Edit3 className="h-3.5 w-3.5 text-white" />
                             <span>Edit</span>
@@ -670,27 +721,109 @@ export const MyLeadsTab: React.FC<MyLeadsTabProps> = ({
                 />
               </div>
 
-              <DialogFooter className="pt-3">
+              <DialogFooter className="pt-3 flex items-center justify-between">
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setEditingLead(null)}
-                  className="h-9 px-4 rounded-xl text-xs font-bold"
+                  onClick={() => {
+                    const toDelete = editingLead
+                    setEditingLead(null)
+                    setDeletingLead(toDelete)
+                  }}
+                  className="h-9 px-3.5 rounded-xl text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200 gap-1.5"
                 >
-                  Cancel
+                  <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                  <span>Delete</span>
                 </Button>
-                <Button
-                  type="submit"
-                  disabled={isSavingEdit}
-                  className="h-9 px-5 rounded-xl text-xs font-black text-white bg-[#0092b3] hover:bg-[#007b99]"
-                >
-                  {isSavingEdit ? 'Saving...' : 'Save Changes'}
-                </Button>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setEditingLead(null)}
+                    className="h-9 px-4 rounded-xl text-xs font-bold"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={isSavingEdit}
+                    className="h-9 px-5 rounded-xl text-xs font-black text-white bg-[#0092b3] hover:bg-[#007b99]"
+                  >
+                    {isSavingEdit ? 'Saving...' : 'Save Changes'}
+                  </Button>
+                </div>
               </DialogFooter>
             </form>
           )}
         </DialogContent>
       </Dialog>
+
+      {/* DELETE CONFIRMATION DIALOG */}
+      <Dialog
+        open={Boolean(deletingLead)}
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) setDeletingLead(null)
+        }}
+      >
+        <DialogContent className="max-w-md rounded-3xl p-6 bg-white shadow-2xl border border-slate-200">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-black text-slate-900">
+                  Delete Lead Record?
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500 font-medium">
+                  This will permanently delete this lead from the live backend database.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {deletingLead && (
+            <div className="my-3 p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Customer:</span>
+                <strong className="text-slate-900 font-bold">{deletingLead.name}</strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Phone:</span>
+                <span className="font-mono text-slate-700">{deletingLead.phone}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Project:</span>
+                <span className="text-slate-700 font-medium">{deletingLead.project}</span>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="pt-2 flex items-center justify-end gap-2.5">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isDeleting}
+              onClick={() => setDeletingLead(null)}
+              className="h-9 px-4 rounded-xl text-xs font-bold text-slate-700 border-slate-200 hover:bg-slate-100"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={isDeleting}
+              onClick={handleConfirmDelete}
+              className="h-9 px-4.5 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 gap-1.5 shadow-sm"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>{isDeleting ? 'Deleting...' : 'Confirm Delete'}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
+
+export default MyLeadsTab

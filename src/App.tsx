@@ -148,12 +148,13 @@ export function App() {
     setRefreshKey((k) => k + 1)
   }
 
-  const handleLogout = () => {
-    AuthToken.clear()
-    localStorage.removeItem('maytri_profile_name')
-    localStorage.removeItem('maytri_last_user_name')
-    localStorage.removeItem('maytri_profile_code')
-    localStorage.removeItem('maytri_profile_designation')
+  const handleLogout = async () => {
+    try {
+      await ApiService.logout()
+    } catch (e) {
+      console.warn('Logout API error:', e)
+      AuthToken.clear()
+    }
     setIsAuthenticated(false)
     setCurrentUser(null)
     setActiveTab('overview')
@@ -300,7 +301,19 @@ export function App() {
 
           {activeTab === 'team' && <MyTeamTab onNavigateTab={setActiveTab} />}
 
-          {activeTab === 'tree' && <NetworkTreeTab onNavigateTab={setActiveTab} />}
+          {activeTab === 'tree' && (
+            <NetworkTreeTab
+              onNavigateTab={(tab, partnerName) => {
+                if (partnerName) {
+                  setSelectedPartner({ name: partnerName })
+                } else {
+                  setSelectedPartner(null)
+                }
+                setSelectedProject('ALL')
+                setActiveTab(tab)
+              }}
+            />
+          )}
 
           {activeTab === 'myleads' && (
             <MyLeadsTab

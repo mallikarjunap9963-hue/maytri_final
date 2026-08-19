@@ -7,6 +7,8 @@ import {
   LayoutDashboard,
   Eye,
   Edit3,
+  Trash2,
+  AlertTriangle,
   CheckCircle2,
   X,
   RefreshCw,
@@ -37,7 +39,7 @@ import { cn } from '@/lib/utils'
 interface LeadsPipelineTabProps {
   searchQuery?: string
   selectedProject?: string
-  selectedPartner?: { id?: number; name?: string } | null
+  selectedPartner?: { id?: number; name?: string } | string | null
   onClearProjectFilter?: () => void
   onClearPartnerFilter?: () => void
   onOpenAddLead?: (projectName?: string) => void
@@ -134,7 +136,9 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
   const [loading, setLoading] = useState<boolean>(true)
   const [stageFilter, setStageFilter] = useState<string>('ALL')
   const [internalProjectFilter, setInternalProjectFilter] = useState<string>(selectedProject || 'ALL')
-  const [internalPartnerFilter, setInternalPartnerFilter] = useState<string>(selectedPartner?.name || 'ALL')
+  const [internalPartnerFilter, setInternalPartnerFilter] = useState<string>(
+    typeof selectedPartner === 'string' ? selectedPartner : selectedPartner?.name || 'ALL'
+  )
   const [internalSearch, setInternalSearch] = useState<string>('')
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [currentPage, setCurrentPage] = useState<number>(1)
@@ -149,6 +153,38 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
   const [editNotes, setEditNotes] = useState<string>('')
   const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false)
 
+  // Delete Lead State
+  const [deletingLead, setDeletingLead] = useState<Lead | null>(null)
+  const [isDeleting, setIsDeleting] = useState<boolean>(false)
+
+  const handleConfirmDelete = async () => {
+    if (!deletingLead) return
+    setIsDeleting(true)
+    const target = deletingLead
+    const numericId = target.rawId ? Number(target.rawId) : Number(target.id.replace(/\D/g, ''))
+
+    try {
+      if (numericId && !isNaN(numericId)) {
+        await ApiService.deleteLead(numericId)
+      } else {
+        await ApiService.deleteLead(target.id)
+      }
+
+      setLeads((prev) => prev.filter((l) => l.id !== target.id && l.rawId !== target.rawId))
+      if (selectedLead && (selectedLead.id === target.id || selectedLead.rawId === target.rawId)) {
+        setSelectedLead(null)
+      }
+
+      toast.success('Lead Deleted', `Lead "${target.name}" has been deleted from live database.`)
+      setDeletingLead(null)
+    } catch (err) {
+      console.warn('Failed to delete lead:', err)
+      toast.error('Delete Failed', 'Could not delete lead. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   // Synchronize when external props change
   useEffect(() => {
     if (selectedProject) {
@@ -157,10 +193,13 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
   }, [selectedProject])
 
   useEffect(() => {
-    if (selectedPartner?.name) {
-      setInternalPartnerFilter(selectedPartner.name)
+    if (selectedPartner) {
+      const name = typeof selectedPartner === 'string' ? selectedPartner : selectedPartner.name
+      setInternalPartnerFilter(name || 'ALL')
+    } else {
+      setInternalPartnerFilter('ALL')
     }
-  }, [selectedPartner?.name])
+  }, [selectedPartner])
 
   const fetchLeadsData = async () => {
     setLoading(true)
@@ -181,7 +220,7 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
 
   useEffect(() => {
     fetchLeadsData()
-  }, [refreshKey, selectedPartner?.id])
+  }, [refreshKey, selectedPartner])
 
   const effectiveSearch = (externalSearch || internalSearch).toLowerCase().trim()
 
@@ -217,12 +256,17 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
         set.add(l.source.trim())
       }
     })
+    if (internalPartnerFilter && internalPartnerFilter !== 'ALL') {
+      set.add(internalPartnerFilter)
+    }
     return Array.from(set).sort()
-  }, [leads])
+  }, [leads, internalPartnerFilter])
 
   // Filter leads: By selected project, partner, stage and search
   const filteredLeads = React.useMemo(() => {
     const seen = new Set<string>()
+    const partnerFilterLower = internalPartnerFilter.toLowerCase().trim()
+
     return leads
       .filter((lead) => {
         const cleanPhone = lead.phone ? lead.phone.replace(/[^0-9]/g, '').slice(-10) : ''
@@ -243,9 +287,13 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
           internalPartnerFilter === 'ALL'
             ? true
             : (lead.assignedTo &&
-                lead.assignedTo.toLowerCase() === internalPartnerFilter.toLowerCase()) ||
+                (lead.assignedTo.toLowerCase() === partnerFilterLower ||
+                  lead.assignedTo.toLowerCase().includes(partnerFilterLower) ||
+                  partnerFilterLower.includes(lead.assignedTo.toLowerCase()))) ||
               (lead.source &&
-                lead.source.toLowerCase() === internalPartnerFilter.toLowerCase()) ||
+                (lead.source.toLowerCase() === partnerFilterLower ||
+                  lead.source.toLowerCase().includes(partnerFilterLower) ||
+                  partnerFilterLower.includes(lead.source.toLowerCase()))) ||
               (lead.partner_id && String(lead.partner_id) === internalPartnerFilter)
 
         // Stage matching
@@ -258,19 +306,30 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
           lead.phone.includes(effectiveSearch) ||
           lead.email.toLowerCase().includes(effectiveSearch) ||
           lead.id.toLowerCase().includes(effectiveSearch) ||
-          (lead.project && lead.project.toLowerCase().includes(effectiveSearch)) ||
-          (lead.requirement && lead.requirement.toLowerCase().includes(effectiveSearch))
+          lead.project.toLowerCase().includes(effectiveSearch) ||
+          lead.stage.toLowerCase().includes(effectiveSearch) ||
+          (lead.assignedTo && lead.assignedTo.toLowerCase().includes(effectiveSearch))
 
         return matchesProject && matchesPartner && matchesStage && matchesSearch
       })
-  }, [leads, effectiveSearch, internalProjectFilter, internalPartnerFilter, stageFilter])
+  }, [
+    leads,
+    internalProjectFilter,
+    internalPartnerFilter,
+    stageFilter,
+    effectiveSearch,
+  ])
 
-  const totalPages = Math.ceil(filteredLeads.length / pageSize) || 1
-  const paginatedLeads = filteredLeads.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  // Pagination calculation
+  const totalPages = Math.max(1, Math.ceil(filteredLeads.length / pageSize))
+  const paginatedLeads = React.useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredLeads.slice(start, start + pageSize)
+  }, [filteredLeads, currentPage, pageSize])
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [effectiveSearch, internalProjectFilter, internalPartnerFilter, stageFilter])
+  }, [internalProjectFilter, internalPartnerFilter, stageFilter, effectiveSearch])
 
   // Move lead stage helper and sync with backend
   const handleMoveStage = async (leadId: string, newStage: Lead['stage']) => {
@@ -383,6 +442,10 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
         onUpdateLeadStage={(id, stage) => {
           handleMoveStage(id, stage)
         }}
+        onDeleteLead={(id) => {
+          setLeads((prev) => prev.filter((l) => l.id !== id && l.rawId !== id))
+          setSelectedLead(null)
+        }}
         onScheduleVisit={onScheduleVisitForLead}
       />
     )
@@ -392,7 +455,7 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
     <div className="space-y-4 font-sans text-slate-800 animate-in fade-in duration-200">
       {/* INTEGRATED CLEAN TOOLBAR */}
       <div className="bg-white p-3.5 px-4 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        {/* Left Side: Navigation & Indicator */}
+        {/* Left Side: Navigation & Pipeline Indicator */}
         <div className="flex flex-wrap items-center gap-2.5">
           {onNavigateToDashboard && (
             <Button
@@ -408,16 +471,58 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
 
           <div className="flex items-center gap-1.5 text-slate-700 text-xs font-extrabold px-1">
             <Users className="h-4 w-4 text-[#0092b3]" />
-            <span>All Leads</span>
+            <span>All Leads ({filteredLeads.length})</span>
           </div>
+
+          {/* Active Filter Badges */}
+          {internalProjectFilter !== 'ALL' && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-cyan-50 text-[#0092b3] border border-cyan-200 shadow-2xs">
+              <Building2 className="h-3 w-3" />
+              <span>{internalProjectFilter}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setInternalProjectFilter('ALL')
+                  if (onClearProjectFilter) onClearProjectFilter()
+                }}
+                className="hover:text-rose-600 ml-0.5 cursor-pointer"
+                title="Clear Project Filter"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+
+          {internalPartnerFilter !== 'ALL' && (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+              <UserCheck className="h-3 w-3" />
+              <span>Partner: {internalPartnerFilter}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setInternalPartnerFilter('ALL')
+                  if (onClearPartnerFilter) onClearPartnerFilter()
+                }}
+                className="hover:text-rose-600 ml-0.5 cursor-pointer"
+                title="Clear Partner Filter"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
         </div>
 
-        {/* Right Side: Project Filter, Partner Filter, Status Filter & Refresh */}
+        {/* Right Side: Filters & Actions */}
         <div className="flex flex-wrap items-center gap-2.5 justify-between sm:justify-end">
-          {/* Project Dropdown Filter */}
+          {/* Project Filter */}
           <select
             value={internalProjectFilter}
-            onChange={(e) => setInternalProjectFilter(e.target.value)}
+            onChange={(e) => {
+              setInternalProjectFilter(e.target.value)
+              if (e.target.value === 'ALL' && onClearProjectFilter) {
+                onClearProjectFilter()
+              }
+            }}
             className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0092b3] cursor-pointer shadow-2xs"
           >
             <option value="ALL">All Projects ({availableProjects.length})</option>
@@ -431,71 +536,69 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
             })}
           </select>
 
-          {/* Channel Partner Dropdown Filter */}
+          {/* Channel Partner Filter */}
           <select
             value={internalPartnerFilter}
-            onChange={(e) => setInternalPartnerFilter(e.target.value)}
+            onChange={(e) => {
+              setInternalPartnerFilter(e.target.value)
+              if (e.target.value === 'ALL' && onClearPartnerFilter) {
+                onClearPartnerFilter()
+              }
+            }}
             className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0092b3] cursor-pointer shadow-2xs"
           >
             <option value="ALL">All Partners ({availablePartners.length})</option>
-            {availablePartners.map((partName) => {
-              const count = leads.filter(
-                (l) =>
-                  (l.assignedTo && l.assignedTo.toLowerCase() === partName.toLowerCase()) ||
-                  (l.source && l.source.toLowerCase() === partName.toLowerCase())
-              ).length
-              return (
-                <option key={partName} value={partName}>
-                  {partName} ({count})
-                </option>
-              )
-            })}
+            {availablePartners.map((partnerName) => (
+              <option key={partnerName} value={partnerName}>
+                {partnerName}
+              </option>
+            ))}
           </select>
 
-          {/* Status Filter Dropdown */}
+          {/* Status Filter */}
           <select
             value={stageFilter}
             onChange={(e) => setStageFilter(e.target.value)}
             className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0092b3] cursor-pointer shadow-2xs"
           >
-            <option value="ALL">All Status ({filteredLeads.length})</option>
-            {STAGES.map((s) => {
-              const count = leads.filter(
-                (l) =>
-                  (internalProjectFilter === 'ALL' ||
-                    isLeadMatchingProject(l, internalProjectFilter)) &&
-                  (internalPartnerFilter === 'ALL' ||
-                    (l.assignedTo &&
-                      l.assignedTo.toLowerCase() === internalPartnerFilter.toLowerCase()) ||
-                    (l.source &&
-                      l.source.toLowerCase() === internalPartnerFilter.toLowerCase())) &&
-                  l.stage === s
-              ).length
-              return (
-                <option key={s} value={s}>
-                  {s} ({count})
-                </option>
-              )
-            })}
+            <option value="ALL">All Status</option>
+            {STAGES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
           </select>
 
-          {/* Refresh Button */}
+          {/* Refresh Action */}
           <Button
             variant="outline"
             size="sm"
             onClick={fetchLeadsData}
-            className="h-9 px-3 border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs gap-1.5 rounded-xl cursor-pointer shadow-2xs"
+            disabled={loading}
+            className="h-9 px-3 border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl gap-1.5 cursor-pointer shadow-2xs shrink-0"
           >
-            <RefreshCw className="h-3.5 w-3.5 text-[#0092b3]" />
+            <RefreshCw className={cn('h-3.5 w-3.5 text-[#0092b3]', loading && 'animate-spin')} />
             <span>Refresh</span>
           </Button>
+
+          {/* Add Lead Action */}
+          {onOpenAddLead && (
+            <Button
+              size="sm"
+              onClick={() => onOpenAddLead(internalProjectFilter !== 'ALL' ? internalProjectFilter : undefined)}
+              className="h-9 px-3.5 bg-[#0092b3] hover:bg-[#007d99] text-white font-black text-xs gap-1.5 rounded-xl cursor-pointer shadow-2xs shrink-0"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Add Lead</span>
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* LEADS TABLE */}
+      {/* LEADS DATA TABLE */}
       {filteredLeads.length === 0 ? (
-        <Card className="border border-slate-200 shadow-2xs bg-white rounded-2xl p-12 text-center space-y-3">
-          <div className="h-12 w-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+        <Card className="p-16 rounded-3xl border border-slate-200 bg-white shadow-2xs text-center space-y-3">
+          <div className="h-12 w-12 rounded-2xl bg-slate-50 border border-slate-200 text-slate-400 flex items-center justify-center mx-auto">
             <Users className="h-6 w-6" />
           </div>
           <div className="space-y-1">
@@ -522,7 +625,7 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
                   <th className="py-4 px-5">STATUS</th>
                   <th className="py-4 px-5">ASSIGNED TO</th>
                   <th className="py-4 px-5">FOLLOW UP</th>
-                  <th className="py-4 px-6 text-right">ACTIONS</th>
+                  <th className="py-4 px-6 text-center">ACTIONS</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
@@ -575,7 +678,7 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
                       <td className="py-4 px-5">
                         <span
                           className={cn(
-                            'inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border',
+                            'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border shadow-2xs',
                             stageConfig.badgeClass
                           )}
                         >
@@ -593,13 +696,14 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
                         {lead.follow_up_date || '-'}
                       </td>
 
-                      {/* ACTIONS */}
-                      <td className="py-4 px-6 text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-2">
+                      {/* ACTIONS: View, Edit */}
+                      <td className="py-4 px-6 text-center whitespace-nowrap">
+                        <div className="inline-flex items-center gap-2 justify-center">
                           <button
                             type="button"
                             onClick={() => setSelectedLead(lead)}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+                            title="View Lead Details"
                           >
                             <Eye className="h-3.5 w-3.5 text-slate-500" />
                             <span>View</span>
@@ -609,6 +713,7 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
                             type="button"
                             onClick={() => handleOpenEdit(lead)}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0092b3] hover:bg-[#007d99] text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+                            title="Edit Lead"
                           >
                             <Edit3 className="h-3.5 w-3.5 text-white" />
                             <span>Edit</span>
@@ -638,19 +743,9 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
                 >
                   Prev
                 </Button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
-                  <button
-                    key={pageNum}
-                    onClick={() => setCurrentPage(pageNum)}
-                    className={`h-7 w-7 rounded-lg text-xs font-bold transition-colors ${
-                      currentPage === pageNum
-                        ? 'bg-[#0092b3] text-white shadow-xs'
-                        : 'text-slate-700 hover:bg-slate-100'
-                    }`}
-                  >
-                    {pageNum}
-                  </button>
-                ))}
+                <span className="px-2 font-bold text-slate-900">
+                  {currentPage} / {totalPages}
+                </span>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -667,47 +762,47 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
       )}
 
       {/* EDIT LEAD MODAL */}
-      <Dialog open={!!editingLead} onOpenChange={(open) => !open && setEditingLead(null)}>
-        <DialogContent className="sm:max-w-md bg-white text-slate-900 border border-slate-200 rounded-2xl shadow-2xl p-6">
+      <Dialog
+        open={Boolean(editingLead)}
+        onOpenChange={(open) => {
+          if (!open) setEditingLead(null)
+        }}
+      >
+        <DialogContent className="max-w-md bg-white rounded-2xl p-6 shadow-xl border border-slate-100">
           <DialogHeader>
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold">
-                <Edit3 className="h-4 w-4" />
-              </div>
-              <div>
-                <DialogTitle className="text-base font-bold text-slate-900">
-                  Edit Prospective Lead
-                </DialogTitle>
-                <DialogDescription className="text-xs text-slate-500">
-                  Update customer status and requirements in real-time
-                </DialogDescription>
-              </div>
-            </div>
+            <DialogTitle className="text-base font-extrabold text-slate-900">
+              Edit Lead Details
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500 font-medium">
+              Update prospect contact information and pipeline stage.
+            </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleSaveEdit} className="space-y-3.5 text-xs text-slate-800 pt-2">
+          <form onSubmit={handleSaveEdit} className="space-y-4 pt-2 text-xs">
             <div>
               <label className="font-bold text-slate-700 block mb-1">Customer Full Name</label>
               <Input
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
+                placeholder="Full Name"
+                className="h-9 rounded-lg border border-slate-300 text-xs font-semibold"
                 required
-                className="h-9 text-xs"
               />
             </div>
 
             <div>
-              <label className="font-bold text-slate-700 block mb-1">Mobile Phone</label>
+              <label className="font-bold text-slate-700 block mb-1">Phone Number</label>
               <Input
                 value={editPhone}
                 onChange={(e) => setEditPhone(e.target.value)}
+                placeholder="Mobile number"
+                className="h-9 rounded-lg border border-slate-300 font-mono text-xs font-semibold"
                 required
-                className="h-9 text-xs"
               />
             </div>
 
             <div>
-              <label className="font-bold text-slate-700 block mb-1">Lead Status</label>
+              <label className="font-bold text-slate-700 block mb-1">Status / Stage</label>
               <select
                 value={editStatus}
                 onChange={(e) => setEditStatus(e.target.value as Lead['stage'])}
@@ -732,32 +827,112 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
               />
             </div>
 
-            <DialogFooter className="pt-2">
+            <DialogFooter className="pt-2 flex items-center justify-between">
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setEditingLead(null)}
-                className="h-8.5 text-xs font-bold"
+                onClick={() => {
+                  const toDelete = editingLead
+                  setEditingLead(null)
+                  setDeletingLead(toDelete)
+                }}
+                className="h-8.5 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200 gap-1.5"
               >
-                Cancel
+                <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                <span>Delete</span>
               </Button>
-              <Button
-                type="submit"
-                disabled={isSavingEdit}
-                className="h-8.5 bg-[#0092b3] hover:bg-[#007d99] text-white font-bold text-xs gap-1.5"
-              >
-                {isSavingEdit ? (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Saving...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Save Changes
-                  </>
-                )}
-              </Button>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingLead(null)}
+                  className="h-8.5 text-xs font-bold"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="h-8.5 bg-[#0092b3] hover:bg-[#007d99] text-white font-bold text-xs gap-1.5"
+                >
+                  {isSavingEdit ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Save Changes
+                    </>
+                  )}
+                </Button>
+              </div>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* DELETE CONFIRMATION DIALOG */}
+      <Dialog
+        open={Boolean(deletingLead)}
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) setDeletingLead(null)
+        }}
+      >
+        <DialogContent className="max-w-md rounded-3xl p-6 bg-white shadow-2xl border border-slate-200">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-black text-slate-900">
+                  Delete Lead Record?
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500 font-medium">
+                  This will permanently delete this lead from the live backend database.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {deletingLead && (
+            <div className="my-3 p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Customer:</span>
+                <strong className="text-slate-900 font-bold">{deletingLead.name}</strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Phone:</span>
+                <span className="font-mono text-slate-700">{deletingLead.phone}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Project:</span>
+                <span className="text-slate-700 font-medium">{deletingLead.project}</span>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="pt-2 flex items-center justify-end gap-2.5">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isDeleting}
+              onClick={() => setDeletingLead(null)}
+              className="h-9 px-4 rounded-xl text-xs font-bold text-slate-700 border-slate-200 hover:bg-slate-100"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={isDeleting}
+              onClick={handleConfirmDelete}
+              className="h-9 px-4.5 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 gap-1.5 shadow-sm"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>{isDeleting ? 'Deleting...' : 'Confirm Delete'}</span>
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

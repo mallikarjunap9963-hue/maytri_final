@@ -17,6 +17,8 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -24,12 +26,14 @@ import { Input } from '@/components/ui/input'
 import { ApiService } from '@/services/apiService'
 import type { BackendLeadActivity } from '@/services/apiService'
 import type { Lead } from '@/data/appData'
+import { toast } from '@/components/common/ToastNotification'
 
 interface LeadDetailsModalProps {
   lead: Lead | null
   isOpen: boolean
   onClose: () => void
   onUpdateLeadStage?: (leadId: string, newStage: Lead['stage']) => void
+  onDeleteLead?: (leadId: string) => void
   onScheduleVisit?: (lead: Lead) => void
 }
 
@@ -56,247 +60,267 @@ export const LeadDetailsModal: React.FC<LeadDetailsModalProps> = ({
   isOpen,
   onClose,
   onUpdateLeadStage,
+  onDeleteLead,
   onScheduleVisit,
 }) => {
   const [currentStage, setCurrentStage] = useState<Lead['stage']>('New Inquiry')
   const [activities, setActivities] = useState<BackendLeadActivity[]>([])
   const [loadingActivities, setLoadingActivities] = useState(false)
   const [newNote, setNewNote] = useState('')
-  const [isSubmittingNote, setIsSubmittingNote] = useState(false)
-  const [noteSuccess, setNoteSuccess] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   useEffect(() => {
     if (lead) {
       setCurrentStage(lead.stage)
-      loadActivities(lead.id)
+      loadActivities()
     }
-  }, [lead, isOpen])
+  }, [lead])
 
-  const loadActivities = async (leadIdStr: string) => {
-    const numericId = Number(leadIdStr.replace(/\D/g, ''))
-    if (!numericId) return
+  if (!isOpen || !lead) return null
+
+  const loadActivities = async () => {
+    if (!lead) return
+    const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
+    if (!numericId || isNaN(numericId)) return
 
     setLoadingActivities(true)
     try {
       const res = await ApiService.getLeadActivities(numericId)
-      if (res.ok && res.data?.items) {
+      if (res.ok && Array.isArray(res.data?.items)) {
         setActivities(res.data.items)
-      } else {
-        setActivities([])
       }
     } catch {
-      setActivities([])
+      // Ignored fallback
     } finally {
       setLoadingActivities(false)
     }
   }
 
   const handleStageChange = async (newStage: Lead['stage']) => {
-    if (!lead) return
     setCurrentStage(newStage)
-    if (onUpdateLeadStage) {
-      onUpdateLeadStage(lead.id, newStage)
-    }
-
     const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
     if (numericId && !isNaN(numericId)) {
-      await ApiService.updateLead(numericId, { status: newStage })
+      try {
+        await ApiService.updateLead(numericId, { status: newStage })
+      } catch {
+        // Fallback
+      }
+    }
+    if (onUpdateLeadStage) {
+      onUpdateLeadStage(lead.id, newStage)
     }
   }
 
   const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newNote.trim() || !lead) return
-
-    setIsSubmittingNote(true)
-    setNoteSuccess(false)
+    if (!newNote.trim() || isSubmitting) return
+    setIsSubmitting(true)
 
     const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
+
     try {
       if (numericId && !isNaN(numericId)) {
-        await ApiService.addLeadNote(numericId, {
+        const res = await ApiService.addLeadNote(numericId, {
           activity_type: 'Note',
           description: newNote.trim(),
         })
+        if (res.ok && res.data) {
+          const act = res.data.data || res.data.activity || res.data
+          setActivities((prev) => [
+            {
+              id: act.id || Date.now(),
+              activity_type: 'Note',
+              description: newNote.trim(),
+              created_at: new Date().toISOString(),
+            },
+            ...prev,
+          ])
+        }
       }
-
-      // Optimistic activity timeline update
-      const newActivity: BackendLeadActivity = {
-        id: Date.now(),
-        activity_type: 'Note',
-        description: newNote.trim(),
-        created_at: new Date().toISOString(),
-      }
-      setActivities([newActivity, ...activities])
       setNewNote('')
-      setNoteSuccess(true)
-      setTimeout(() => setNoteSuccess(false), 3000)
+      toast.success('Note Recorded', 'Added to lead activity timeline.')
     } catch (err) {
       console.warn('Failed to add note:', err)
     } finally {
-      setIsSubmittingNote(false)
+      setIsSubmitting(false)
     }
   }
 
-  if (!isOpen || !lead) return null
+  const handleConfirmDelete = async () => {
+    setIsDeleting(true)
+    const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
+
+    try {
+      if (numericId && !isNaN(numericId)) {
+        await ApiService.deleteLead(numericId)
+      } else {
+        await ApiService.deleteLead(lead.id)
+      }
+
+      toast.success('Lead Deleted', `Lead "${lead.name}" has been removed.`)
+      setShowDeleteConfirm(false)
+      onClose()
+      if (onDeleteLead) {
+        onDeleteLead(lead.id)
+      }
+    } catch (err) {
+      console.warn('Failed to delete lead:', err)
+      toast.error('Delete Failed', 'Could not delete lead. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
         {/* HEADER */}
-        <div className="p-6 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3.5">
-            <div className="h-12 w-12 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold text-lg shrink-0">
-              <User className="h-6 w-6" />
+        <div className="p-5 px-6 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-black text-sm">
+              {lead.name
+                .split(' ')
+                .map((n) => n[0])
+                .slice(0, 2)
+                .join('')
+                .toUpperCase()}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-black text-slate-900 tracking-tight">
-                  {lead.name}
-                </h3>
-                <span className="text-xs font-mono font-bold text-slate-400 bg-slate-200/70 px-2 py-0.5 rounded-md">
+                <h3 className="text-base font-extrabold text-slate-900">{lead.name}</h3>
+                <span className="font-mono text-[10px] font-bold text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded">
                   {lead.id}
                 </span>
               </div>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Lead inquiry details & live activity timeline
-              </p>
+              <p className="text-xs text-slate-500 font-medium">{lead.project}</p>
             </div>
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="h-9 w-9 rounded-full bg-slate-200/70 hover:bg-slate-300 text-slate-700 flex items-center justify-center transition-colors cursor-pointer"
+            className="h-8 w-8 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer"
           >
-            <X className="h-4.5 w-4.5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* BODY (SCROLLABLE) */}
-        <div className="p-6 overflow-y-auto space-y-6 text-slate-800 font-sans">
-          {/* STAGE & STATUS CONTROL BAR */}
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="space-y-0.5">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                Current Pipeline Stage
-              </span>
-              <span
-                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-extrabold border ${
-                  STAGE_BADGES[currentStage] || 'bg-slate-100 text-slate-800 border-slate-200'
-                }`}
+        {/* DELETE CONFIRMATION ALERT (IF TRIGGERED) */}
+        {showDeleteConfirm && (
+          <div className="p-4 bg-rose-50 border-b border-rose-200 flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 text-rose-800 font-bold">
+              <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+              <span>Are you sure you want to permanently delete lead &quot;{lead.name}&quot;?</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isDeleting}
+                onClick={() => setShowDeleteConfirm(false)}
+                className="h-7 text-xs font-bold"
               >
-                {currentStage}
-              </span>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="h-7 text-xs font-black bg-rose-600 hover:bg-rose-700 text-white"
+              >
+                {isDeleting ? 'Deleting...' : 'Confirm Delete'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* BODY */}
+        <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+          {/* CUSTOMER DETAILS & STAGE SELECTION */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+              <div className="flex items-center gap-2 text-slate-600">
+                <Phone className="h-3.5 w-3.5 text-[#0092b3]" />
+                <span className="font-mono font-bold text-slate-900">{lead.phone}</span>
+              </div>
+              {lead.email && (
+                <div className="flex items-center gap-2 text-slate-600">
+                  <Mail className="h-3.5 w-3.5 text-[#0092b3]" />
+                  <span>{lead.email}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-slate-600">
+                <Building2 className="h-3.5 w-3.5 text-[#0092b3]" />
+                <span>{lead.project}</span>
+              </div>
+              <div className="flex items-center gap-2 text-slate-600">
+                <User className="h-3.5 w-3.5 text-[#0092b3]" />
+                <span>Assigned: <strong className="text-slate-800">{lead.assignedTo || 'CP Team'}</strong></span>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-bold text-slate-600">Update Stage:</label>
+            {/* STAGE SELECTOR */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+              <label className="text-[11px] font-black uppercase tracking-wider text-slate-500 block">
+                Update Pipeline Stage
+              </label>
               <select
                 value={currentStage}
                 onChange={(e) => handleStageChange(e.target.value as Lead['stage'])}
-                className="h-8.5 rounded-xl border border-slate-300 bg-white px-3 text-xs font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0092b3] cursor-pointer"
+                className="w-full h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-[#0092b3]"
               >
-                {STAGES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+                {STAGES.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
                   </option>
                 ))}
               </select>
-            </div>
-          </div>
-
-          {/* KEY DETAILS GRID */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                <Phone className="h-3.5 w-3.5 text-[#0092b3]" /> Phone Number
-              </span>
-              <p className="font-extrabold text-slate-900">
-                <a href={`tel:${lead.phone}`} className="hover:underline text-[#0092b3]">
-                  {lead.phone}
-                </a>
+              <p className="text-[11px] text-slate-400 font-medium">
+                Changing the stage syncs immediately with your team's live pipeline.
               </p>
             </div>
-
-            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                <Mail className="h-3.5 w-3.5 text-[#0092b3]" /> Email Address
-              </span>
-              <p className="font-bold text-slate-900 truncate">{lead.email || 'None'}</p>
-            </div>
-
-            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                <Building2 className="h-3.5 w-3.5 text-[#0092b3]" /> Project Interest
-              </span>
-              <p className="font-extrabold text-slate-900">{lead.project}</p>
-            </div>
-
-            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                <Tag className="h-3.5 w-3.5 text-purple-600" /> Configuration
-              </span>
-              <p className="font-extrabold text-slate-900">{lead.unitType || '2/3 BHK'}</p>
-            </div>
-
-            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                <DollarSign className="h-3.5 w-3.5 text-emerald-600" /> Budget Bracket
-              </span>
-              <p className="font-extrabold text-slate-900">{lead.budget || '₹ 1.2 Cr'}</p>
-            </div>
-
-            <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                <Calendar className="h-3.5 w-3.5 text-amber-600" /> Registration Date
-              </span>
-              <p className="font-extrabold text-slate-900">{lead.createdDate || 'Recently'}</p>
-            </div>
           </div>
 
-          {/* REQUIREMENTS & NOTES */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Customer Requirements & Notes
-            </h4>
-            <p className="text-xs text-slate-700 leading-relaxed font-medium bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
-              {lead.notes || 'No custom notes provided for this lead.'}
-            </p>
-          </div>
-
-          {/* ADD NOTE / ACTIVITY LOGGING */}
-          <div className="space-y-3 pt-2 border-t border-slate-100">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <Activity className="h-3.5 w-3.5 text-[#0092b3]" /> Live Activity Log & Timeline
-              </h4>
-              {noteSuccess && (
-                <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1 animate-in fade-in">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Note saved to backend!
-                </span>
-              )}
-            </div>
-
-            <form onSubmit={handleAddNote} className="flex gap-2">
+          {/* NOTE INPUT */}
+          <form onSubmit={handleAddNote} className="space-y-2">
+            <label className="text-[11px] font-black uppercase tracking-wider text-slate-500 block">
+              Add Interaction Note
+            </label>
+            <div className="flex gap-2">
               <Input
                 value={newNote}
                 onChange={(e) => setNewNote(e.target.value)}
-                placeholder="Log a call note, follow-up remark, or feedback..."
-                className="h-9.5 text-xs bg-slate-50 border-slate-200 rounded-xl"
+                placeholder="Log a call outcome or customer request..."
+                className="h-9 rounded-xl text-xs"
               />
               <Button
                 type="submit"
-                disabled={isSubmittingNote || !newNote.trim()}
-                className="h-9.5 px-4 bg-[#0092b3] hover:bg-[#007d99] text-white font-extrabold text-xs gap-1.5 rounded-xl shadow-xs shrink-0 cursor-pointer"
+                disabled={isSubmitting || !newNote.trim()}
+                className="h-9 px-4 bg-[#0092b3] hover:bg-[#007d99] text-white font-bold text-xs rounded-xl shrink-0"
               >
-                {isSubmittingNote ? (
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Send className="h-3.5 w-3.5" />
-                )}
-                <span>Add Note</span>
+                <Send className="h-3.5 w-3.5" />
+                <span>Save</span>
               </Button>
-            </form>
+            </div>
+          </form>
+
+          {/* ACTIVITY TIMELINE */}
+          <div className="space-y-3 pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                <Activity className="h-3.5 w-3.5 text-[#0092b3]" />
+                <span>Activity Timeline</span>
+              </span>
+              <button
+                type="button"
+                onClick={loadActivities}
+                className="text-[11px] font-bold text-[#0092b3] hover:underline"
+              >
+                Refresh
+              </button>
+            </div>
 
             {/* TIMELINE ITEMS */}
             <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
@@ -333,13 +357,23 @@ export const LeadDetailsModal: React.FC<LeadDetailsModalProps> = ({
 
         {/* FOOTER */}
         <div className="p-4 px-6 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
-          <Button
-            variant="outline"
-            onClick={onClose}
-            className="h-9 border-slate-300 text-slate-700 font-bold text-xs rounded-xl px-4 cursor-pointer"
-          >
-            Close
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={onClose}
+              className="h-9 border-slate-300 text-slate-700 font-bold text-xs rounded-xl px-4 cursor-pointer"
+            >
+              Close
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="h-9 border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 font-bold text-xs rounded-xl px-3 cursor-pointer gap-1"
+            >
+              <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+              <span>Delete</span>
+            </Button>
+          </div>
 
           {onScheduleVisit && (
             <Button

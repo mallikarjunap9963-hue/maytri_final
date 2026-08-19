@@ -27,14 +27,25 @@ import {
   Check,
   Copy,
   ExternalLink,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { ApiService } from '@/services/apiService'
 import type { BackendLeadActivity } from '@/services/apiService'
 import type { Lead } from '@/data/appData'
+import { toast } from '@/components/common/ToastNotification'
 import { cn } from '@/lib/utils'
 
 interface LeadDetailPageProps {
@@ -42,6 +53,7 @@ interface LeadDetailPageProps {
   onBack: () => void
   onNavigateToDashboard?: () => void
   onUpdateLeadStage?: (leadId: string, newStage: Lead['stage']) => void
+  onDeleteLead?: (leadId: string) => void
   onScheduleVisit?: (lead: Lead) => void
 }
 
@@ -59,6 +71,7 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
   onBack,
   onNavigateToDashboard,
   onUpdateLeadStage,
+  onDeleteLead,
   onScheduleVisit,
 }) => {
   const [currentStage, setCurrentStage] = useState<Lead['stage']>(lead.stage)
@@ -72,6 +85,13 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
   const [isUpdatingStage, setIsUpdatingStage] = useState(false)
   const [copiedField, setCopiedField] = useState<string | null>(null)
 
+  // Stage Change Confirmation State
+  const [pendingStageChange, setPendingStageChange] = useState<Lead['stage'] | null>(null)
+
+  // Delete State
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
   useEffect(() => {
     setCurrentStage(lead.stage)
     loadActivities()
@@ -81,7 +101,6 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
     const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
     if (!numericId || isNaN(numericId)) {
       setLoadingActivities(false)
-      // Provide initial timeline item if none exist
       setActivities([
         {
           id: 101,
@@ -99,7 +118,6 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
       if (res.ok && Array.isArray(res.data?.items) && res.data.items.length > 0) {
         setActivities(res.data.items)
       } else {
-        // Fallback default timeline entry
         setActivities([
           {
             id: 101,
@@ -123,84 +141,144 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
     }
   }
 
-  const handleCopyText = (text: string, fieldName: string) => {
-    navigator.clipboard.writeText(text)
-    setCopiedField(fieldName)
-    setTimeout(() => setCopiedField(null), 2000)
-  }
-
   const handleStageChange = async (newStage: Lead['stage']) => {
     if (newStage === currentStage || isUpdatingStage) return
     setIsUpdatingStage(true)
     setCurrentStage(newStage)
-    if (onUpdateLeadStage) {
-      onUpdateLeadStage(lead.id, newStage)
-    }
 
     const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
     try {
       if (numericId && !isNaN(numericId)) {
         await ApiService.updateLead(numericId, { status: newStage })
       }
-
-      // Add stage change to activity feed
-      const stageActivity: BackendLeadActivity = {
-        id: Date.now(),
-        activity_type: 'Stage Changed',
-        description: `Pipeline stage progressed to "${newStage}".`,
-        created_at: new Date().toISOString(),
+      if (onUpdateLeadStage) {
+        onUpdateLeadStage(lead.id, newStage)
       }
-      setActivities((prev) => [stageActivity, ...prev])
+
+      setActivities((prev) => [
+        {
+          id: Date.now(),
+          activity_type: 'Stage Changed',
+          description: `Stage upgraded to "${newStage}".`,
+          created_at: new Date().toISOString(),
+        },
+        ...prev,
+      ])
+      toast.success('Stage Updated', `Lead stage moved to "${newStage}".`)
     } catch (err) {
-      console.warn('Failed to update stage on backend:', err)
+      console.warn('Failed to update stage:', err)
+      toast.error('Stage Update Failed', 'Could not sync stage change to server.')
     } finally {
       setIsUpdatingStage(false)
     }
   }
 
-  const handleAddActivitySubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newNote.trim()) return
+  const handleConfirmStageChange = async () => {
+    if (!pendingStageChange) return
+    const targetStage = pendingStageChange
+    setPendingStageChange(null)
+    await handleStageChange(targetStage)
+  }
 
+  const handleAddNote = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newNote.trim() || isSubmittingNote) return
     setIsSubmittingNote(true)
-    setNoteSuccess(false)
+
+    const notePayload = {
+      activity_type: activityType,
+      description: newNote.trim(),
+      next_followup_date: nextFollowUpDate || undefined,
+    }
 
     const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
-    const fullDesc = nextFollowUpDate
-      ? `${newNote.trim()} (Next Follow-up: ${nextFollowUpDate})`
-      : newNote.trim()
 
     try {
       if (numericId && !isNaN(numericId)) {
-        await ApiService.addLeadNote(numericId, {
-          activity_type: activityType,
-          description: fullDesc,
-        })
+        const res = await ApiService.addLeadNote(numericId, notePayload)
+        if (res.ok && res.data) {
+          const createdAct = res.data.data || res.data.activity || res.data
+          setActivities((prev) => [
+            {
+              id: createdAct.id || Date.now(),
+              activity_type: activityType,
+              description: newNote.trim(),
+              created_at: new Date().toISOString(),
+            },
+            ...prev,
+          ])
+        } else {
+          setActivities((prev) => [
+            {
+              id: Date.now(),
+              activity_type: activityType,
+              description: newNote.trim(),
+              created_at: new Date().toISOString(),
+            },
+            ...prev,
+          ])
+        }
+      } else {
+        setActivities((prev) => [
+          {
+            id: Date.now(),
+            activity_type: activityType,
+            description: newNote.trim(),
+            created_at: new Date().toISOString(),
+          },
+          ...prev,
+        ])
       }
 
-      const newActivity: BackendLeadActivity = {
-        id: Date.now(),
-        activity_type: activityType,
-        description: fullDesc,
-        created_at: new Date().toISOString(),
-      }
-      setActivities((prev) => [newActivity, ...prev])
       setNewNote('')
       setNextFollowUpDate('')
       setNoteSuccess(true)
+      toast.success('Activity Logged', 'Note recorded to timeline.')
       setTimeout(() => setNoteSuccess(false), 3000)
     } catch (err) {
-      console.warn('Failed to add note:', err)
+      console.warn('Error adding lead activity note:', err)
+      toast.error('Failed to Log Note', 'Could not save note.')
     } finally {
       setIsSubmittingNote(false)
     }
   }
 
-  // Format clean phone for WhatsApp
-  const cleanPhone = lead.phone.replace(/[^0-9]/g, '')
+  const handleCopy = (text: string, fieldName: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedField(fieldName)
+    setTimeout(() => setCopiedField(null), 2000)
+  }
+
+  const handleConfirmDelete = async () => {
+    setIsDeleting(true)
+    const numericId = lead.rawId ? Number(lead.rawId) : Number(lead.id.replace(/\D/g, ''))
+
+    try {
+      if (numericId && !isNaN(numericId)) {
+        await ApiService.deleteLead(numericId)
+      } else {
+        await ApiService.deleteLead(lead.id)
+      }
+
+      toast.success('Lead Deleted', `Lead "${lead.name}" has been deleted from live database.`)
+      setIsDeleteConfirmOpen(false)
+      if (onDeleteLead) {
+        onDeleteLead(lead.id)
+      } else {
+        onBack()
+      }
+    } catch (err) {
+      console.warn('Failed to delete lead:', err)
+      toast.error('Delete Failed', 'Could not delete lead. Please try again.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  const cleanPhone = lead.phone ? lead.phone.replace(/[^0-9]/g, '') : ''
   const whatsappUrl = `https://wa.me/${cleanPhone.startsWith('91') ? cleanPhone : `91${cleanPhone}`}?text=Hello%20${encodeURIComponent(
     lead.name
-  )},%20thank%20you%20for%20your%20interest%20in%20${encodeURIComponent(lead.project)}.%20How%20can%20we%20assist%20you%20today?`
+  )},%20thank%20you%20for%20your%20interest%20in%20${encodeURIComponent(lead.project || 'Maytri Properties')}.%20How%20can%20we%20assist%20you%20today?`
 
   return (
     <div className="space-y-6 font-sans text-slate-800 animate-in fade-in duration-200">
@@ -265,290 +343,527 @@ export const LeadDetailPage: React.FC<LeadDetailPageProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Right Header: Delete Lead Action */}
+        <div className="flex items-center gap-2 self-end md:self-auto shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsDeleteConfirmOpen(true)}
+            className="h-9 px-3.5 border-rose-200 bg-rose-50/70 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl gap-1.5 cursor-pointer shadow-2xs transition-colors shrink-0"
+            title="Delete this lead permanently"
+          >
+            <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+            <span>Delete Lead</span>
+          </Button>
+        </div>
       </div>
 
       {/* 2-COLUMN MAIN CONTENT GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* LEFT COLUMN: CUSTOMER & PROPERTY PROFILE */}
-        <div className="lg:col-span-1 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* LEFT COLUMN: CUSTOMER & PROPERTY PROFILE (STICKY) */}
+        <div className="lg:col-span-1 space-y-4 lg:sticky lg:top-4 self-start">
           {/* Customer Details Card */}
           <Card className="border border-slate-200 shadow-2xs rounded-2xl bg-white overflow-hidden">
-            <CardHeader className="p-4 px-5 bg-slate-50/70 border-b border-slate-100">
-              <CardTitle className="text-xs font-extrabold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
-                <User className="h-3.5 w-3.5 text-[#0092b3]" /> Buyer Contact Information
+            <CardHeader className="p-4 border-b border-slate-100 bg-slate-50/70">
+              <CardTitle className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                <User className="h-3.5 w-3.5 text-[#0092b3]" />
+                <span>Customer Profile</span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-4 space-y-3 text-xs">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                    <Phone className="h-3 w-3 text-[#0092b3]" /> Mobile Number
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyText(lead.phone, 'phone')}
-                    className="text-slate-400 hover:text-slate-700 text-[10px] flex items-center gap-1"
-                    title="Copy phone"
-                  >
-                    {copiedField === 'phone' ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
-                  </button>
-                </div>
-                <p className="font-extrabold text-slate-900 text-sm">
-                  <a href={`tel:${lead.phone}`} className="hover:underline text-[#0092b3]">
-                    {lead.phone}
-                  </a>
-                </p>
+            <CardContent className="p-4 space-y-3.5 text-xs">
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Full Name
+                </span>
+                <p className="font-extrabold text-slate-900 text-sm">{lead.name}</p>
               </div>
 
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Phone Number
+                </span>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                    <Mail className="h-3 w-3 text-[#0092b3]" /> Email Address
+                  <span className="font-mono font-bold text-slate-800 text-xs">
+                    {lead.phone || 'Not Provided'}
                   </span>
-                  {lead.email && lead.email !== '-' && (
+                  {lead.phone && (
                     <button
                       type="button"
-                      onClick={() => handleCopyText(lead.email, 'email')}
-                      className="text-slate-400 hover:text-slate-700 text-[10px] flex items-center gap-1"
-                      title="Copy email"
+                      onClick={() => handleCopy(lead.phone, 'phone')}
+                      className="p-1 rounded-md text-slate-400 hover:text-[#0092b3] hover:bg-slate-100 transition-colors"
+                      title="Copy phone"
                     >
-                      {copiedField === 'email' ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+                      {copiedField === 'phone' ? (
+                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
                     </button>
                   )}
                 </div>
-                <p className="font-bold text-slate-900 text-xs truncate">
-                  {lead.email && lead.email !== '-' ? (
-                    <a href={`mailto:${lead.email}`} className="hover:underline text-[#0092b3]">
-                      {lead.email}
-                    </a>
-                  ) : (
-                    <span className="text-slate-400 font-normal">Not Provided</span>
-                  )}
-                </p>
               </div>
 
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
-                <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                  <MapPin className="h-3 w-3 text-[#0092b3]" /> Location / City
-                </span>
-                <p className="font-bold text-slate-900">{lead.city || '-'}</p>
+              {lead.email && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Email Address
+                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-slate-700 truncate">{lead.email}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(lead.email, 'email')}
+                      className="p-1 rounded-md text-slate-400 hover:text-[#0092b3] hover:bg-slate-100 transition-colors"
+                      title="Copy email"
+                    >
+                      {copiedField === 'email' ? (
+                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Communication Actions */}
+              <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-2">
+                <a
+                  href={`tel:${lead.phone}`}
+                  className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-cyan-50 hover:bg-cyan-100/80 text-[#0092b3] font-bold text-xs transition-colors border border-cyan-200/60"
+                >
+                  <PhoneCall className="h-3.5 w-3.5" />
+                  <span>Call Lead</span>
+                </a>
+                <a
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100/80 text-emerald-700 font-bold text-xs transition-colors border border-emerald-200/60"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>WhatsApp</span>
+                </a>
               </div>
             </CardContent>
           </Card>
 
-          {/* Property Requirement Card */}
+          {/* Project & Property Requirements Card */}
           <Card className="border border-slate-200 shadow-2xs rounded-2xl bg-white overflow-hidden">
-            <CardHeader className="p-4 px-5 bg-slate-50/70 border-b border-slate-100">
-              <CardTitle className="text-xs font-extrabold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
-                <Building2 className="h-3.5 w-3.5 text-[#0092b3]" /> Requirement & Preferences
+            <CardHeader className="p-4 border-b border-slate-100 bg-slate-50/70">
+              <CardTitle className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                <Building2 className="h-3.5 w-3.5 text-[#0092b3]" />
+                <span>Property Interest</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4 space-y-3 text-xs">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
-                <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">Interested Project</span>
-                <p className="font-extrabold text-slate-900 text-sm">{lead.project || '-'}</p>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Assigned Project:</span>
+                <strong className="text-slate-900 font-black">{lead.project || 'General Inquiry'}</strong>
               </div>
 
-              {(lead.requirement || lead.notes) && (
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
-                  <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                    <Tag className="h-3 w-3 text-purple-600" /> Buyer Requirement / Remarks
+              {lead.budget && (
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 font-medium">Budget Range:</span>
+                  <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 text-xs">
+                    {lead.budget}
                   </span>
-                  <p className="font-semibold text-slate-800 leading-relaxed">
-                    {lead.requirement || lead.notes}
+                </div>
+              )}
+
+              {lead.requirement && (
+                <div className="space-y-1 pt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Customer Requirements
+                  </span>
+                  <p className="text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-100 leading-relaxed font-medium">
+                    {lead.requirement}
                   </p>
                 </div>
               )}
 
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-1">
-                <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                  <ShieldCheck className="h-3 w-3 text-blue-600" /> Attribution & Executive
-                </span>
-                <p className="font-semibold text-slate-800">
-                  {lead.source ? `Created by: ${lead.source}` : 'Channel Partner'}
-                  {lead.assignedTo ? ` • Managed by: ${lead.assignedTo}` : ''}
-                </p>
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-slate-500 font-medium">Assigned Executive:</span>
+                <span className="font-bold text-slate-800">{lead.assignedTo || 'POKALA REDDY'}</span>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* RIGHT COLUMN: INDUSTRY-LEVEL ACTIVITY TIMELINE & LOGGING */}
-        <div className="lg:col-span-2 space-y-4">
+        {/* RIGHT COLUMN: PIPELINE STEPPER & ACTIVITY TIMELINE */}
+        <div className="lg:col-span-2 space-y-5">
+          {/* PIPELINE PROGRESS STEPPER */}
           <Card className="border border-slate-200 shadow-2xs rounded-2xl bg-white overflow-hidden">
-            <CardHeader className="p-4 px-5 border-b border-slate-100 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <CardHeader className="p-4 border-b border-slate-100 bg-slate-50/70 flex flex-row items-center justify-between">
               <div>
-                <CardTitle className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                  <Activity className="h-3.5 w-3.5 text-[#0092b3]" /> Activity Feed & Interaction Timeline
+                <CardTitle className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                  <Sparkles className="h-3.5 w-3.5 text-[#0092b3]" />
+                  <span>Lead Stage Progression</span>
                 </CardTitle>
-                <CardDescription className="text-xs text-slate-500 font-medium">
-                  Log phone calls, site visit impressions, remarks, and negotiation updates
+                <CardDescription className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Click any stage below to upgrade the customer status in real-time.
                 </CardDescription>
               </div>
-
-              {noteSuccess && (
-                <span className="text-xs font-bold text-emerald-700 flex items-center gap-1 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 self-start sm:self-auto">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> Activity logged successfully!
-                </span>
-              )}
+              <span className="px-2.5 py-1 rounded-full text-xs font-black bg-[#0092b3]/10 text-[#0092b3] border border-[#0092b3]/20">
+                {currentStage}
+              </span>
             </CardHeader>
+            <CardContent className="p-5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+                {STAGES.map((s) => {
+                  const isActive = currentStage === s.label
+                  return (
+                    <button
+                      key={s.label}
+                      type="button"
+                      disabled={isUpdatingStage}
+                      onClick={() => {
+                        if (s.label !== currentStage) {
+                          setPendingStageChange(s.label)
+                        }
+                      }}
+                      className={cn(
+                        'p-3 rounded-2xl border text-left transition-all duration-200 cursor-pointer flex flex-col justify-between min-h-[84px] group relative overflow-hidden',
+                        isActive
+                          ? 'bg-[#0092b3] text-white border-[#0092b3] shadow-sm ring-2 ring-[#0092b3]/20'
+                          : 'bg-slate-50/80 hover:bg-cyan-50/50 border-slate-200 hover:border-cyan-200 text-slate-700'
+                      )}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span
+                          className={cn(
+                            'text-[10px] font-black h-5 w-5 rounded-full flex items-center justify-center',
+                            isActive
+                              ? 'bg-white/20 text-white'
+                              : 'bg-slate-200/80 text-slate-600 group-hover:bg-cyan-100 group-hover:text-[#0092b3]'
+                          )}
+                        >
+                          {s.step}
+                        </span>
+                        {isActive && <CheckCircle2 className="h-3.5 w-3.5 text-white" />}
+                      </div>
+                      <div>
+                        <h4
+                          className={cn(
+                            'text-xs font-black leading-tight',
+                            isActive ? 'text-white' : 'text-slate-800'
+                          )}
+                        >
+                          {s.label}
+                        </h4>
+                        <p
+                          className={cn(
+                            'text-[9.5px] font-medium leading-tight mt-0.5 line-clamp-1',
+                            isActive ? 'text-cyan-100' : 'text-slate-400'
+                          )}
+                        >
+                          {s.desc}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
 
-            <CardContent className="p-5 space-y-5">
-              {/* LOG ACTIVITY CARD */}
-              <form onSubmit={handleAddActivitySubmit} className="p-4 rounded-xl bg-slate-50/80 border border-slate-200 space-y-3 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-extrabold text-slate-800">Log New Interaction</span>
-                  {/* Activity Type Selector */}
-                  <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200">
-                    {(['Call', 'Note', 'Site Visit', 'WhatsApp', 'Meeting'] as const).map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setActivityType(t)}
-                        className={cn(
-                          'px-2.5 py-1 rounded-lg text-[10.5px] font-extrabold transition-colors cursor-pointer',
-                          activityType === t ? 'bg-[#0092b3] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                        )}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
+          {/* LOG ACTIVITY / NOTE FORM */}
+          <Card className="border border-slate-200 shadow-2xs rounded-2xl bg-white overflow-hidden">
+            <CardHeader className="p-4 border-b border-slate-100 bg-slate-50/70">
+              <CardTitle className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                <Plus className="h-3.5 w-3.5 text-[#0092b3]" />
+                <span>Log New Interaction / Follow-up Note</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4">
+              <form onSubmit={handleAddNote} className="space-y-3.5">
+                {/* Activity Type Selection Tabs */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {(['Call', 'Note', 'Site Visit', 'Meeting', 'WhatsApp'] as const).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setActivityType(type)}
+                      className={cn(
+                        'px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer border',
+                        activityType === type
+                          ? 'bg-[#0092b3] text-white border-[#0092b3] shadow-2xs'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      )}
+                    >
+                      {type === 'Call' && <Phone className="h-3 w-3 inline mr-1" />}
+                      {type === 'Site Visit' && <Calendar className="h-3 w-3 inline mr-1" />}
+                      {type === 'Note' && <FileText className="h-3 w-3 inline mr-1" />}
+                      {type}
+                    </button>
+                  ))}
                 </div>
 
-                <textarea
-                  rows={2}
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                  placeholder={`Enter details about this ${activityType.toLowerCase()} (e.g. Customer requested floor plan brochure and price quote...)`}
-                  className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-[#0092b3]"
-                  required
-                />
+                {/* Note Textarea */}
+                <div className="space-y-1">
+                  <textarea
+                    value={newNote}
+                    onChange={(e) => setNewNote(e.target.value)}
+                    placeholder={`Write notes on the ${activityType.toLowerCase()} with ${lead.name}...`}
+                    rows={3}
+                    className="w-full p-3 rounded-xl border border-slate-200 text-xs font-medium text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0092b3] bg-slate-50/40"
+                    required
+                  />
+                </div>
 
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-bold text-slate-500">Next Follow-up Date:</span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-500 font-semibold">Next Follow-up:</span>
                     <input
                       type="date"
                       value={nextFollowUpDate}
                       onChange={(e) => setNextFollowUpDate(e.target.value)}
-                      className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0092b3]"
+                      className="h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700 bg-white"
                     />
                   </div>
 
                   <Button
                     type="submit"
                     disabled={isSubmittingNote || !newNote.trim()}
-                    className="h-8.5 px-4 bg-[#0092b3] hover:bg-[#007d99] text-white font-extrabold text-xs gap-1.5 rounded-xl shadow-2xs cursor-pointer shrink-0"
+                    className="h-8.5 px-4 bg-[#0092b3] hover:bg-[#007d99] text-white font-extrabold text-xs gap-1.5 rounded-xl cursor-pointer shadow-2xs"
                   >
-                    {isSubmittingNote ? (
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Send className="h-3.5 w-3.5" />
-                    )}
-                    <span>Save {activityType}</span>
+                    <Send className="h-3.5 w-3.5" />
+                    <span>{isSubmittingNote ? 'Saving...' : 'Save Activity Note'}</span>
                   </Button>
                 </div>
               </form>
+            </CardContent>
+          </Card>
 
-              {/* TIMELINE FEED SECTION */}
-              <div className="space-y-3.5">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
-                    Activity History ({activities.length})
-                  </h4>
+          {/* ACTIVITY & AUDIT TIMELINE */}
+          <Card className="border border-slate-200 shadow-2xs rounded-2xl bg-white overflow-hidden">
+            <CardHeader className="p-4 border-b border-slate-100 bg-slate-50/70 flex flex-row items-center justify-between">
+              <CardTitle className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                <Activity className="h-3.5 w-3.5 text-[#0092b3]" />
+                <span>Activity History & Audit Timeline</span>
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={loadActivities}
+                className="h-7 px-2 text-[11px] font-bold text-slate-500 hover:text-[#0092b3]"
+              >
+                <RefreshCw className={cn('h-3 w-3 mr-1', loadingActivities && 'animate-spin')} />
+                <span>Refresh</span>
+              </Button>
+            </CardHeader>
+            <CardContent className="p-5">
+              {loadingActivities ? (
+                <div className="py-8 text-center text-slate-400 text-xs font-medium flex items-center justify-center gap-2">
+                  <RefreshCw className="h-4 w-4 animate-spin text-[#0092b3]" />
+                  <span>Loading activity timeline...</span>
                 </div>
+              ) : activities.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
+                  <MessageSquare className="h-6 w-6 mx-auto text-slate-300 mb-2" />
+                  <p className="font-bold text-slate-700">No interaction notes recorded yet</p>
+                  <p className="font-normal text-[11px]">Log your first call or site visit update using the form above.</p>
+                </div>
+              ) : (
+                <div className="space-y-4 relative before:absolute before:inset-0 before:left-3.5 before:w-0.5 before:bg-slate-200 before:pointer-events-none">
+                  {activities.map((act) => {
+                    const isCall = act.activity_type?.toLowerCase().includes('call')
+                    const isVisit = act.activity_type?.toLowerCase().includes('visit')
+                    const isStage = act.activity_type?.toLowerCase().includes('stage')
 
-                {loadingActivities ? (
-                  <div className="py-12 flex flex-col items-center justify-center text-slate-400 space-y-2">
-                    <RefreshCw className="h-6 w-6 animate-spin text-[#0092b3]" />
-                    <span className="text-xs font-bold">Loading timeline history...</span>
-                  </div>
-                ) : activities.length === 0 ? (
-                  <div className="py-10 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-1 text-slate-500">
-                    <FileText className="h-6 w-6 mx-auto text-slate-400 mb-1" />
-                    <p className="text-xs font-bold text-slate-700">No activity logged yet</p>
-                    <p className="text-[11px]">Use the input above to log your first remark or follow-up note.</p>
-                  </div>
-                ) : (
-                  <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
-                    {activities.map((act) => {
-                      const type = (act.activity_type || 'Note').toLowerCase()
-                      const isCall = type.includes('call') || type.includes('phone')
-                      const isVisit = type.includes('visit') || type.includes('tour')
-                      const isStage = type.includes('stage')
-                      const isWa = type.includes('whatsapp')
-
-                      return (
-                        <div key={act.id} className="relative flex items-start gap-3 text-xs group">
-                          {/* Timeline Icon Node */}
-                          <div
-                            className={cn(
-                              'absolute -left-6 top-1 h-5 w-5 rounded-full flex items-center justify-center border-2 border-white shadow-2xs shrink-0',
-                              isCall
-                                ? 'bg-blue-600 text-white'
-                                : isVisit
-                                  ? 'bg-purple-600 text-white'
-                                  : isStage
-                                    ? 'bg-amber-500 text-white'
-                                    : isWa
-                                      ? 'bg-emerald-600 text-white'
-                                      : 'bg-[#0092b3] text-white'
-                            )}
-                          >
-                            {isCall ? (
-                              <Phone className="h-2.5 w-2.5" />
-                            ) : isVisit ? (
-                              <Calendar className="h-2.5 w-2.5" />
-                            ) : isStage ? (
-                              <Sparkles className="h-2.5 w-2.5" />
-                            ) : isWa ? (
-                              <MessageSquare className="h-2.5 w-2.5" />
-                            ) : (
-                              <FileText className="h-2.5 w-2.5" />
-                            )}
-                          </div>
-
-                          <div className="flex-1 bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-2xs space-y-1 hover:border-[#0092b3]/40 transition-colors">
-                            <div className="flex items-center justify-between gap-2">
-                              <span
-                                className={cn(
-                                  'font-extrabold text-xs',
-                                  isCall
-                                    ? 'text-blue-700'
-                                    : isVisit
-                                      ? 'text-purple-700'
-                                      : isStage
-                                        ? 'text-amber-700'
-                                        : 'text-slate-900'
-                                )}
-                              >
-                                {act.activity_type || 'Note'}
-                              </span>
-                              <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 shrink-0">
-                                <Clock className="h-3 w-3" />
-                                {act.created_at ? new Date(act.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Recent'}
-                              </span>
-                            </div>
-                            <p className="text-slate-700 text-xs leading-relaxed font-medium">
-                              {act.description}
-                            </p>
-                            {act.performed_by && (
-                              <p className="text-[10px] font-semibold text-slate-400 pt-0.5">
-                                Logged by: {act.performed_by.first_name} {act.performed_by.last_name}
-                              </p>
-                            )}
-                          </div>
+                    return (
+                      <div key={act.id} className="relative flex items-start gap-3.5 pl-1 group">
+                        <div
+                          className={cn(
+                            'h-7 w-7 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 z-10 shadow-2xs border',
+                            isCall
+                              ? 'bg-cyan-50 text-[#0092b3] border-cyan-200'
+                              : isVisit
+                                ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                : isStage
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-slate-100 text-slate-700 border-slate-200'
+                          )}
+                        >
+                          {isCall ? (
+                            <Phone className="h-3.5 w-3.5" />
+                          ) : isVisit ? (
+                            <Calendar className="h-3.5 w-3.5" />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5" />
+                          )}
                         </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
+
+                        <div className="flex-1 bg-slate-50/90 border border-slate-200/80 rounded-2xl p-3.5 space-y-1 shadow-2xs">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span
+                              className={cn(
+                                'text-xs font-extrabold uppercase tracking-wider',
+                                isCall
+                                  ? 'text-[#0092b3]'
+                                  : isVisit
+                                    ? 'text-purple-700'
+                                    : isStage
+                                      ? 'text-amber-700'
+                                      : 'text-slate-900'
+                              )}
+                            >
+                              {act.activity_type || 'Note'}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 shrink-0">
+                              <Clock className="h-3 w-3" />
+                              {act.created_at ? new Date(act.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Recent'}
+                            </span>
+                          </div>
+                          <p className="text-slate-700 text-xs leading-relaxed font-medium">
+                            {act.description}
+                          </p>
+                          {act.performed_by && (
+                            <p className="text-[10px] font-semibold text-slate-400 pt-0.5">
+                              Logged by: {act.performed_by.first_name} {act.performed_by.last_name}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
       </div>
+
+      {/* STAGE CHANGE CONFIRMATION DIALOG */}
+      <Dialog
+        open={Boolean(pendingStageChange)}
+        onOpenChange={(open) => {
+          if (!open && !isUpdatingStage) setPendingStageChange(null)
+        }}
+      >
+        <DialogContent className="max-w-md rounded-3xl p-6 bg-white shadow-2xl border border-slate-200">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-2xl bg-cyan-50 text-[#0092b3] flex items-center justify-center shrink-0 border border-cyan-200">
+                <Sparkles className="h-5 w-5 text-[#0092b3]" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-black text-slate-900">
+                  Update Pipeline Stage?
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500 font-medium">
+                  Confirm to upgrade this lead&apos;s stage in the database.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {pendingStageChange && (
+            <div className="my-3 p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Customer:</span>
+                <strong className="text-slate-900 font-bold">{lead.name}</strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-semibold">Current Stage:</span>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-200 text-slate-700">
+                  {currentStage}
+                </span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-slate-200/80">
+                <span className="text-[#0092b3] font-bold">New Stage:</span>
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-[#0092b3] text-white shadow-2xs">
+                  {pendingStageChange}
+                </span>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="pt-2 flex items-center justify-end gap-2.5">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isUpdatingStage}
+              onClick={() => setPendingStageChange(null)}
+              className="h-9 px-4 rounded-xl text-xs font-bold text-slate-700 border-slate-200 hover:bg-slate-100"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={isUpdatingStage}
+              onClick={handleConfirmStageChange}
+              className="h-9 px-5 rounded-xl text-xs font-black text-white bg-[#0092b3] hover:bg-[#007d99] gap-1.5 shadow-sm"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              <span>{isUpdatingStage ? 'Updating...' : `Confirm: ${pendingStageChange}`}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DELETE CONFIRMATION DIALOG */}
+      <Dialog
+        open={isDeleteConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) setIsDeleteConfirmOpen(false)
+        }}
+      >
+        <DialogContent className="max-w-md rounded-3xl p-6 bg-white shadow-2xl border border-slate-200">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-black text-slate-900">
+                  Delete Lead Record?
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500 font-medium">
+                  This will permanently delete this lead from the live backend database.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="my-3 p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-semibold">Customer:</span>
+              <strong className="text-slate-900 font-bold">{lead.name}</strong>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-semibold">Phone:</span>
+              <span className="font-mono text-slate-700">{lead.phone}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500 font-semibold">Project:</span>
+              <span className="text-slate-700 font-medium">{lead.project}</span>
+            </div>
+          </div>
+
+          <DialogFooter className="pt-2 flex items-center justify-end gap-2.5">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isDeleting}
+              onClick={() => setIsDeleteConfirmOpen(false)}
+              className="h-9 px-4 rounded-xl text-xs font-bold text-slate-700 border-slate-200 hover:bg-slate-100"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={isDeleting}
+              onClick={handleConfirmDelete}
+              className="h-9 px-4.5 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 gap-1.5 shadow-sm"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>{isDeleting ? 'Deleting...' : 'Confirm Delete'}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
