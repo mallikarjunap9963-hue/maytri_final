@@ -594,32 +594,32 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
   return (
     <div className="space-y-6 text-slate-900 animate-in fade-in duration-200">
-      {/* 1. TOP BACKEND KPI CARDS */}
+      {/* 1. TOP BACKEND KPI CARDS (2 CARDS PER ROW ON MOBILE) */}
       <div
         className={cn(
-          'grid grid-cols-1 gap-4',
+          'grid grid-cols-2 gap-3 sm:gap-4',
           isCpHead
             ? showTeamLeadsCard
-              ? 'sm:grid-cols-2 lg:grid-cols-4'
-              : 'sm:grid-cols-2 lg:grid-cols-3'
-            : 'sm:grid-cols-2'
+              ? 'lg:grid-cols-4'
+              : 'lg:grid-cols-3'
+            : ''
         )}
       >
         {/* 1. Projects */}
         <Card
           onClick={() => onNavigateTab && onNavigateTab('projects')}
-          className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer group"
+          className="border border-slate-200 shadow-xs bg-white rounded-2xl p-3.5 sm:p-5 hover:shadow-md transition-all cursor-pointer group"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Projects</p>
-              <h3 className="text-3xl font-black text-slate-900 mt-1">{projectsCount}</h3>
-              <p className="text-[11px] font-semibold text-emerald-600 mt-1.5 flex items-center gap-1 group-hover:underline">
-                <CheckCircle2 className="h-3.5 w-3.5" /> All Active on Portal
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider truncate">Projects</p>
+              <h3 className="text-2xl sm:text-3xl font-black text-slate-900 mt-0.5 sm:mt-1">{projectsCount}</h3>
+              <p className="text-[10px] sm:text-[11px] font-semibold text-emerald-600 mt-1 flex items-center gap-1 group-hover:underline truncate">
+                <CheckCircle2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 shrink-0" /> <span className="truncate">Active on Portal</span>
               </p>
             </div>
-            <div className="h-12 w-12 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors">
-              <Building2 className="h-6 w-6" />
+            <div className="h-9 w-9 sm:h-12 sm:w-12 rounded-xl sm:rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors shrink-0">
+              <Building2 className="h-4.5 w-4.5 sm:h-6 sm:w-6" />
             </div>
           </div>
         </Card>
@@ -628,18 +628,18 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         {isCpHead && (
           <Card
             onClick={() => onNavigateTab && onNavigateTab('team')}
-            className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer group"
+            className="border border-slate-200 shadow-xs bg-white rounded-2xl p-3.5 sm:p-5 hover:shadow-md transition-all cursor-pointer group"
           >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Team Size</p>
-                <h3 className="text-3xl font-black text-slate-900 mt-1">{teamCount}</h3>
-                <p className="text-[11px] font-semibold text-[#0092b3] mt-1.5 flex items-center gap-1 group-hover:underline">
-                  <Users className="h-3.5 w-3.5" /> View Team Network
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider truncate">Team Size</p>
+                <h3 className="text-2xl sm:text-3xl font-black text-slate-900 mt-0.5 sm:mt-1">{teamCount}</h3>
+                <p className="text-[10px] sm:text-[11px] font-semibold text-[#0092b3] mt-1 flex items-center gap-1 group-hover:underline truncate">
+                  <Users className="h-3 w-3 sm:h-3.5 sm:w-3.5 shrink-0" /> <span className="truncate">Team Network</span>
                 </p>
               </div>
-              <div className="h-12 w-12 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors">
-                <Users className="h-6 w-6" />
+              <div className="h-9 w-9 sm:h-12 sm:w-12 rounded-xl sm:rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors shrink-0">
+                <Users className="h-4.5 w-4.5 sm:h-6 sm:w-6" />
               </div>
             </div>
           </Card>
@@ -648,18 +648,18 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         {/* 3. My Leads */}
         <Card
           onClick={() => onNavigateTab && onNavigateTab('myleads')}
-          className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer group"
+          className="border border-slate-200 shadow-xs bg-white rounded-2xl p-3.5 sm:p-5 hover:shadow-md transition-all cursor-pointer group"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">My Leads</p>
-              <h3 className="text-3xl font-black text-slate-900 mt-1">{totalLeadsCount}</h3>
-              <p className="text-[11px] font-semibold text-[#0092b3] mt-1.5 flex items-center gap-1 group-hover:underline">
-                <TrendingUp className="h-3.5 w-3.5" /> Direct Sourced Leads
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider truncate">My Leads</p>
+              <h3 className="text-2xl sm:text-3xl font-black text-slate-900 mt-0.5 sm:mt-1">{totalLeadsCount}</h3>
+              <p className="text-[10px] sm:text-[11px] font-semibold text-[#0092b3] mt-1 flex items-center gap-1 group-hover:underline truncate">
+                <TrendingUp className="h-3 w-3 sm:h-3.5 sm:w-3.5 shrink-0" /> <span className="truncate">Direct Leads</span>
               </p>
             </div>
-            <div className="h-12 w-12 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors">
-              <TrendingUp className="h-6 w-6" />
+            <div className="h-9 w-9 sm:h-12 sm:w-12 rounded-xl sm:rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors shrink-0">
+              <TrendingUp className="h-4.5 w-4.5 sm:h-6 sm:w-6" />
             </div>
           </div>
         </Card>
@@ -668,18 +668,18 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         {showTeamLeadsCard && (
           <Card
             onClick={() => onNavigateTab && onNavigateTab('leads')}
-            className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer group"
+            className="border border-slate-200 shadow-xs bg-white rounded-2xl p-3.5 sm:p-5 hover:shadow-md transition-all cursor-pointer group"
           >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Team Leads</p>
-                <h3 className="text-3xl font-black text-slate-900 mt-1">{teamLeadsCount}</h3>
-                <p className="text-[11px] font-semibold text-[#0092b3] mt-1.5 flex items-center gap-1 group-hover:underline">
-                  <UserCheck className="h-3.5 w-3.5" /> Network Contribution
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider truncate">Team Leads</p>
+                <h3 className="text-2xl sm:text-3xl font-black text-slate-900 mt-0.5 sm:mt-1">{teamLeadsCount}</h3>
+                <p className="text-[10px] sm:text-[11px] font-semibold text-[#0092b3] mt-1 flex items-center gap-1 group-hover:underline truncate">
+                  <UserCheck className="h-3 w-3 sm:h-3.5 sm:w-3.5 shrink-0" /> <span className="truncate">Network Leads</span>
                 </p>
               </div>
-              <div className="h-12 w-12 rounded-2xl bg-cyan-50 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors">
-                <UserCheck className="h-6 w-6" />
+              <div className="h-9 w-9 sm:h-12 sm:w-12 rounded-xl sm:rounded-2xl bg-cyan-50 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors shrink-0">
+                <UserCheck className="h-4.5 w-4.5 sm:h-6 sm:w-6" />
               </div>
             </div>
           </Card>
