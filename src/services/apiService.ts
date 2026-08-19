@@ -180,20 +180,48 @@ export const AuthToken = {
   setUser: (user: BackendUser) => localStorage.setItem('maytri_user', JSON.stringify(user)),
 }
 
-// Reusable HTTP fetcher with Bearer Authorization, Auto Refresh, and direct fallback
+// Helper to extract detailed error messages from backend response
+function parseApiErrorMessage(data: any, status: number): string {
+  if (!data) {
+    if (status === 400) return 'Bad Request: Please verify submitted information.'
+    if (status === 401) return 'Unauthorized: Please log in again.'
+    if (status === 403) return 'Forbidden: You do not have permission.'
+    if (status === 404) return 'Resource not found on server.'
+    if (status === 500) return 'Internal Server Error: Backend service error.'
+    return `Request failed with HTTP status ${status}`
+  }
+  if (typeof data === 'string') return data
+  if (data.message && typeof data.message === 'string') return data.message
+  if (data.detail) {
+    if (typeof data.detail === 'string') return data.detail
+    if (Array.isArray(data.detail)) {
+      return data.detail.map((d: any) => d.msg || JSON.stringify(d)).join(', ')
+    }
+  }
+  if (data.error && typeof data.error === 'string') return data.error
+  if (data.errors) {
+    if (typeof data.errors === 'string') return data.errors
+    if (Array.isArray(data.errors)) return data.errors.join(', ')
+    if (typeof data.errors === 'object') {
+      const msgs = Object.entries(data.errors).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+      return msgs.join('; ')
+    }
+  }
+  return `Server returned error (${status})`
+}
+
+// Reusable HTTP fetcher with Bearer Authorization and Auto Refresh
 async function apiFetch<T = any>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<{ ok: boolean; data?: T; status: number; message?: string; errors?: any }> {
-  const base = (API_BASE_URL || '').replace(/\/+$/, '')
+  const base = (API_BASE_URL || DIRECT_BACKEND_URL).replace(/\/+$/, '')
   let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
   if (!cleanEndpoint.startsWith('/api/') && cleanEndpoint !== '/api') {
     cleanEndpoint = `/api${cleanEndpoint}`
   }
 
-  const relativeUrl = cleanEndpoint
-  const directUrl = `${DIRECT_BACKEND_URL}${cleanEndpoint}`
-  const primaryUrl = base ? `${base}${cleanEndpoint}` : relativeUrl
+  const targetUrl = `${base}${cleanEndpoint}`
   const token = AuthToken.getAccess()
 
   const headers: Record<string, string> = {
@@ -208,128 +236,70 @@ async function apiFetch<T = any>(
     headers['Content-Type'] = 'application/json'
   }
 
-  const executeFetch = async (targetUrl: string) => {
+  try {
     const res = await fetch(targetUrl, { ...options, headers })
-    const contentType = (res.headers.get('content-type') || '').toLowerCase()
-
-    // If proxy rewrite returns index.html (content-type: text/html), treat as proxy miss
-    if (contentType.includes('text/html')) {
-      throw new Error('Received HTML response instead of JSON from API proxy')
-    }
-
     let data: any = null
     try {
       data = await res.json()
     } catch {
-      // response might be empty or non-JSON
+      // Non-JSON response
     }
-    return { res, data }
-  }
 
-  const candidates: string[] = []
-  // Direct Render backend URL
-  candidates.push(`${DIRECT_BACKEND_URL}${cleanEndpoint}`)
-  // Base URL (if different)
-  if (base && !candidates.includes(`${base}${cleanEndpoint}`)) {
-    candidates.push(`${base}${cleanEndpoint}`)
-  }
-  // Relative URL (Vercel proxy)
-  candidates.push(cleanEndpoint)
-
-  // With & without trailing slash variants
-  if (cleanEndpoint.endsWith('/')) {
-    const noSlash = cleanEndpoint.slice(0, -1)
-    candidates.push(`${DIRECT_BACKEND_URL}${noSlash}`)
-    candidates.push(noSlash)
-  } else {
-    const withSlash = `${cleanEndpoint}/`
-    candidates.push(`${DIRECT_BACKEND_URL}${withSlash}`)
-    candidates.push(withSlash)
-  }
-
-  const uniqueCandidates = Array.from(new Set(candidates))
-
-  try {
-    let res!: Response
-    let data: any = null
-    let lastErr: any = null
-    let succeeded = false
-
-    for (const targetUrl of uniqueCandidates) {
-      try {
-        const result = await executeFetch(targetUrl)
-        // If 405, 404, or 502/504 proxy errors, retry next candidate URL
-        if (result.res.status === 405 || result.res.status === 404 || result.res.status === 502 || result.res.status === 504) {
-          res = result.res
-          data = result.data
-          lastErr = new Error(`HTTP ${result.res.status} on ${targetUrl}`)
-          continue
+    // Auto-refresh token on 401 Unauthorized (unless requesting auth endpoints)
+    if (
+      res.status === 401 &&
+      AuthToken.getRefresh() &&
+      !cleanEndpoint.includes('/accounts/refresh') &&
+      !cleanEndpoint.includes('/accounts/login')
+    ) {
+      const refreshResult = await ApiService.refreshToken()
+      const newAccess = AuthToken.getAccess()
+      if (refreshResult.ok && newAccess) {
+        const retryHeaders = {
+          ...headers,
+          Authorization: `Bearer ${newAccess}`,
         }
-        res = result.res
-        data = result.data
-        succeeded = true
-        break
-      } catch (err) {
-        lastErr = err
-      }
-    }
+        const retryRes = await fetch(targetUrl, { ...options, headers: retryHeaders })
+        let retryData: any = null
+        try {
+          retryData = await retryRes.json()
+        } catch {}
 
-    if (!succeeded && !res) {
-      throw lastErr || new Error('All backend endpoints failed')
-    }
-
-    if (res.status === 401 && AuthToken.getRefresh() && !endpoint.includes('/refresh')) {
-      // Attempt token refresh
-      const refreshed = await ApiService.refreshToken()
-      if (refreshed.ok && refreshed.data?.access_token) {
-        headers['Authorization'] = `Bearer ${refreshed.data.access_token}`
-        const retryUrl = primaryUrl !== directUrl ? directUrl : primaryUrl
-        const retryRes = await fetch(retryUrl, { ...options, headers })
-        const retryData = await retryRes.json().catch(() => null)
+        if (retryRes.ok) {
+          return { ok: true, data: retryData, status: retryRes.status }
+        }
         return {
-          ok: retryRes.ok,
+          ok: false,
           data: retryData,
           status: retryRes.status,
-          message: retryData?.message,
+          message: parseApiErrorMessage(retryData, retryRes.status),
           errors: retryData?.errors,
         }
+      } else {
+        AuthToken.clear()
       }
     }
 
-    if (res.status >= 500) {
-      return {
-        ok: false,
-        data,
-        status: res.status,
-        message:
-          data?.message ||
-          'Backend Database Error: Database host is unreachable on Render. Please check backend connection.',
-        errors: data?.errors,
-      }
-    }
-
-    const isExplicitFail = data && data.success === false
-    const isSuccess = res.ok && !isExplicitFail
-
+    const isSuccess = res.ok
     return {
       ok: isSuccess,
       data,
       status: res.status,
-      message: data?.message || (isSuccess ? undefined : `Request failed (${res.status})`),
+      message: isSuccess ? undefined : parseApiErrorMessage(data, res.status),
       errors: data?.errors,
     }
   } catch (err: any) {
-    console.warn(`[API] Error calling ${endpoint}:`, err)
     const isNetworkOrFetchFail =
       err?.message === 'Failed to fetch' ||
       err?.message?.includes('fetch') ||
       err?.name === 'TypeError'
+
     return {
       ok: false,
       status: 0,
       message: isNetworkOrFetchFail
         ? 'Unable to connect to backend server. The server may be waking up or offline. Please retry in a moment.'
-        : err?.message || 'Network error or backend unreachable',
+        : err?.message || 'Network connection failed',
     }
   }
 }
@@ -486,46 +456,28 @@ export const ApiService = {
     return res
   },
 
-  // Auth: Refresh Token
-  async refreshToken() {
+  // Auth: Refresh Token (POST /api/accounts/refresh)
+  async refreshToken(): Promise<{ ok: boolean; status: number; data?: { access_token: string } }> {
     const refreshToken = AuthToken.getRefresh()
     if (!refreshToken) return { ok: false, status: 401 }
 
-    const refreshPayload = {
-      refresh: refreshToken,
-      refresh_token: refreshToken,
+    const res = await apiFetch<any>('/api/accounts/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+
+    const newAccess =
+      res.data?.access_token ||
+      res.data?.access ||
+      res.data?.data?.access_token ||
+      res.data?.data?.access
+
+    if (res.ok && newAccess) {
+      AuthToken.setAccess(newAccess)
+      return { ok: true, data: { access_token: newAccess }, status: res.status }
     }
 
-    const endpoints = [
-      '/api/accounts/refresh/',
-      '/api/accounts/refresh',
-      '/api/token/refresh/',
-      '/api/token/refresh',
-      '/api/auth/refresh/',
-      '/api/auth/refresh',
-    ]
-
-    for (const ep of endpoints) {
-      try {
-        const res = await apiFetch(ep, {
-          method: 'POST',
-          body: JSON.stringify(refreshPayload),
-        })
-        const newAccess =
-          res.data?.access_token ||
-          res.data?.access ||
-          res.data?.data?.access_token ||
-          res.data?.data?.access
-        if (res.ok && newAccess) {
-          AuthToken.setAccess(newAccess)
-          return { ok: true, data: { access_token: newAccess }, status: 200 }
-        }
-      } catch {
-        // continue
-      }
-    }
-
-    return { ok: false, status: 401 }
+    return { ok: false, status: res.status }
   },
 
   // Auth: Current User Me
@@ -549,23 +501,23 @@ export const ApiService = {
     return res
   },
 
-  // Auth: Forgot Password
+  // Auth: Forgot Password (POST /api/accounts/forgot-password)
   async forgotPassword(email: string) {
     return apiFetch('/api/accounts/forgot-password', {
       method: 'POST',
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email: email.trim() }),
     })
   },
 
-  // Auth: Verify Reset OTP
+  // Auth: Verify Reset OTP (POST /api/accounts/verify-reset-otp)
   async verifyResetOtp(email: string, otp: string) {
     return apiFetch('/api/accounts/verify-reset-otp', {
       method: 'POST',
-      body: JSON.stringify({ email, otp }),
+      body: JSON.stringify({ email: email.trim(), otp: otp.trim() }),
     })
   },
 
-  // Auth: Reset Password
+  // Auth: Reset Password (POST /api/accounts/reset-password)
   async resetPassword(reset_token: string, new_password: string, confirm_password: string) {
     return apiFetch('/api/accounts/reset-password', {
       method: 'POST',
@@ -573,44 +525,22 @@ export const ApiService = {
     })
   },
 
-  // Auth: Logout
+  // Auth: Logout (POST /api/accounts/logout)
   async logout() {
     const refreshToken = AuthToken.getRefresh()
-    const payload = {
-      refresh_token: refreshToken || undefined,
-      refresh: refreshToken || undefined,
-    }
-
-    const endpoints = [
-      '/api/accounts/logout/',
-      '/api/accounts/logout',
-      '/api/auth/logout/',
-      '/api/auth/logout',
-      '/api/logout/',
-    ]
-
-    for (const ep of endpoints) {
+    if (refreshToken) {
       try {
-        const res = await apiFetch<any>(ep, {
+        await apiFetch('/api/accounts/logout', {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ refresh_token: refreshToken }),
         })
-        if (res.ok) {
-          break
-        }
-      } catch {
-        // Continue to fallback
+      } catch (e) {
+        console.warn('Logout API network notice:', e)
       }
     }
 
-    // Clean all session tokens and local caches
+    // Clean session tokens and user state
     AuthToken.clear()
-    localStorage.removeItem('maytri_profile_name')
-    localStorage.removeItem('maytri_last_user_name')
-    localStorage.removeItem('maytri_profile_code')
-    localStorage.removeItem('maytri_profile_designation')
-    localStorage.removeItem('maytri_user_role')
-
     return { ok: true, message: 'Logged out successfully' }
   },
 
