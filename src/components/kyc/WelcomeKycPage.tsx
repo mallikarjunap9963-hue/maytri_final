@@ -703,21 +703,21 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
 
         {/* KYC POPUP APPLICATION DIALOG */}
         <Dialog open={isKycModalOpen} onOpenChange={setIsKycModalOpen}>
-          <DialogContent className="max-w-3xl sm:max-w-4xl max-h-[90vh] p-0 overflow-hidden bg-white rounded-3xl border border-slate-200 shadow-2xl flex flex-col">
+          <DialogContent className="w-[96vw] max-w-4xl max-h-[92vh] p-0 overflow-hidden bg-white rounded-2xl sm:rounded-3xl border border-slate-200 shadow-2xl flex flex-col mx-auto">
             {/* Modal Header */}
-            <div className="border-b border-slate-100 bg-slate-50/90 px-6 sm:px-8 py-4 flex items-center justify-between gap-2 shrink-0">
+            <div className="border-b border-slate-100 bg-slate-50/90 px-4 sm:px-8 py-3.5 sm:py-4 flex items-center justify-between gap-2 shrink-0">
               <div>
-                <DialogTitle className="text-base sm:text-lg font-black text-slate-900">
+                <DialogTitle className="text-sm sm:text-lg font-black text-slate-900">
                   Partner KYC Verification Form
                 </DialogTitle>
-                <DialogDescription className="text-xs text-slate-600 font-medium mt-0.5">
+                <DialogDescription className="text-[11px] sm:text-xs text-slate-600 font-medium mt-0.5">
                   Please provide accurate details matching your official government identity documents
                 </DialogDescription>
               </div>
             </div>
 
             {/* Modal Body - Scrollable Form */}
-            <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-6">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-5 sm:space-y-6">
               {errorMessage && (
                 <div className="flex items-center gap-2.5 p-3.5 rounded-2xl bg-rose-50 border border-rose-300 text-rose-800 text-xs font-bold shadow-sm animate-in fade-in">
                   <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />

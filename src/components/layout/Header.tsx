@@ -7,6 +7,8 @@ import {
   User,
   Activity,
   CheckCircle2,
+  Menu,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { MaytriLogo } from '@/components/common/MaytriLogo'
@@ -28,6 +30,8 @@ interface HeaderProps {
   activeTab?: TabType
   setActiveTab?: (tab: TabType) => void
   onNavigateToKyc?: () => void
+  isMobileMenuOpen?: boolean
+  onToggleMobileMenu?: () => void
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -36,6 +40,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAddLead,
   currentUser,
   onLogout,
+  isMobileMenuOpen,
+  onToggleMobileMenu,
 }) => {
   // Live Partner Profile State from backend GET /api/partners/profile (with synchronous localStorage cache to prevent flicker)
   const [profileData, setProfileData] = useState<{
@@ -128,9 +134,24 @@ export const Header: React.FC<HeaderProps> = ({
   const displayName = getDisplayName()
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 sm:h-18 w-full items-center justify-between border-b border-slate-200/90 bg-white/95 backdrop-blur-md px-4 sm:px-6 md:px-8 shadow-xs">
-      {/* Brand Logo */}
-      <div className="flex items-center gap-6">
+    <header className="sticky top-0 z-40 flex h-16 sm:h-18 w-full items-center justify-between border-b border-slate-200/90 bg-white/95 backdrop-blur-md px-3 sm:px-6 md:px-8 shadow-xs">
+      {/* Brand Logo & Mobile Toggle */}
+      <div className="flex items-center gap-2 sm:gap-4">
+        {onToggleMobileMenu && (
+          <button
+            type="button"
+            onClick={onToggleMobileMenu}
+            className="md:hidden p-2 text-slate-700 hover:text-[#0092b3] hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+            title={isMobileMenuOpen ? 'Close Menu' : 'Open Navigation Menu'}
+            aria-label="Toggle navigation menu"
+          >
+            {isMobileMenuOpen ? (
+              <X className="h-5 w-5 text-slate-800" />
+            ) : (
+              <Menu className="h-5 w-5 text-slate-800" />
+            )}
+          </button>
+        )}
         <MaytriLogo size="md" />
       </div>
 
@@ -148,14 +169,14 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div className="h-6 w-px bg-slate-200 mx-1 hidden sm:block" />
 
-        {/* User Profile Pill Widget matching requested design */}
-        <div className="flex items-center rounded-2xl border border-slate-200 bg-white hover:bg-slate-50/80 px-3.5 py-1.5 shadow-2xs transition-all cursor-pointer font-outfit">
+        {/* User Profile Pill Widget */}
+        <div className="flex items-center rounded-2xl border border-slate-200 bg-white hover:bg-slate-50/80 px-2.5 sm:px-3.5 py-1 sm:py-1.5 shadow-2xs transition-all cursor-pointer font-outfit shrink-0">
           {/* User Name, Code & Designation */}
           <div className="text-left leading-tight">
-            <p className="text-xs font-black text-slate-800 tracking-tight uppercase">
+            <p className="text-[11px] sm:text-xs font-black text-slate-800 tracking-tight uppercase truncate max-w-[85px] sm:max-w-[160px] md:max-w-[220px]">
               {displayName}
             </p>
-            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mt-0.5">
+            <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] font-bold text-slate-500 mt-0.5">
               <span className="font-mono text-slate-600 font-semibold">{profileData?.superiorCode || localStorage.getItem('maytri_profile_code') || 'IP451201'}</span>
               <span className="text-slate-300">•</span>
               <span className="text-[#0092b3] font-extrabold">{profileData?.designation || localStorage.getItem('maytri_profile_designation') || currentUser?.role || 'CP_Head'}</span>
@@ -165,7 +186,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         <button
           onClick={onLogout}
-          className="h-8.5 px-3 text-xs font-bold text-white bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-xl shadow-xs shadow-red-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+          className="h-8.5 px-2.5 sm:px-3 text-xs font-bold text-white bg-red-600 hover:bg-red-700 active:bg-red-800 rounded-xl shadow-xs shadow-red-600/20 transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
           title="Sign Out"
         >
           <LogOut className="h-3.5 w-3.5" />

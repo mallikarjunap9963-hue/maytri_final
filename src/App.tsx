@@ -22,7 +22,15 @@ import { ToastContainer, toast } from '@/components/common/ToastNotification'
 import type { Lead, SiteVisit } from '@/data/appData'
 import { MOCK_SITE_VISITS } from '@/data/appData'
 import { ApiService, AuthToken } from '@/services/apiService'
-import { CheckCircle2 } from 'lucide-react'
+import {
+  CheckCircle2,
+  LayoutDashboard,
+  Building2,
+  UserCheck,
+  Users,
+  GitFork,
+} from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 export function App() {
   // Authentication State - Default to checking stored session
@@ -50,7 +58,8 @@ export function App() {
   const [selectedProject, setSelectedProject] = useState<string>('ALL')
   const [selectedPartner, setSelectedPartner] = useState<{ id?: number; name?: string } | null>(null)
 
-  // Modals state
+  // Modals & Mobile Menu state
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false)
   const [isAddLeadOpen, setIsAddLeadOpen] = useState<boolean>(false)
   const [targetProjectForAddLead, setTargetProjectForAddLead] = useState<string | undefined>(undefined)
   const [isScheduleVisitOpen, setIsScheduleVisitOpen] = useState<boolean>(false)
@@ -231,6 +240,8 @@ export function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onNavigateToKyc={() => setAppView('kyc')}
+        isMobileMenuOpen={isMobileMenuOpen}
+        onToggleMobileMenu={() => setIsMobileMenuOpen((prev) => !prev)}
       />
 
       {/* Main Container */}
@@ -243,9 +254,10 @@ export function App() {
               setSelectedProject('ALL')
             }
             setActiveTab(tab)
+            setIsMobileMenuOpen(false)
           }}
-          unreadVisitsCount={MOCK_SITE_VISITS.length}
-          activeLeadsCount={0}
+          isMobileOpen={isMobileMenuOpen}
+          onCloseMobile={() => setIsMobileMenuOpen(false)}
         />
 
         {/* Dynamic Content Viewport */}
@@ -359,6 +371,64 @@ export function App() {
           {activeTab === 'partners' && <ChannelPartnersTab />}
         </main>
       </div>
+
+      {/* MOBILE BOTTOM NAVIGATION BAR (md:hidden) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 flex items-center justify-around shadow-lg">
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={cn(
+            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            activeTab === 'overview' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
+          )}
+        >
+          <LayoutDashboard className="h-4.5 w-4.5 mb-0.5" />
+          <span>Dashboard</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('projects')}
+          className={cn(
+            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            activeTab === 'projects' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
+          )}
+        >
+          <Building2 className="h-4.5 w-4.5 mb-0.5" />
+          <span>Projects</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('myleads')}
+          className={cn(
+            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            activeTab === 'myleads' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
+          )}
+        >
+          <UserCheck className="h-4.5 w-4.5 mb-0.5" />
+          <span>My Leads</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('team')}
+          className={cn(
+            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            activeTab === 'team' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
+          )}
+        >
+          <Users className="h-4.5 w-4.5 mb-0.5" />
+          <span>My Team</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('tree')}
+          className={cn(
+            'flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold transition-all cursor-pointer',
+            activeTab === 'tree' ? 'text-[#0092b3]' : 'text-slate-500 hover:text-slate-800'
+          )}
+        >
+          <GitFork className="h-4.5 w-4.5 mb-0.5" />
+          <span>Network</span>
+        </button>
+      </nav>
 
       {/* Modals */}
       <AddLeadModal
