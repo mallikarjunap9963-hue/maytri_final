@@ -111,6 +111,47 @@ export interface BackendPartner {
   status?: string
 }
 
+export interface DashboardProjectStats {
+  project: {
+    id: number
+    title: string
+    project_code: string
+  }
+  total: number
+  statuses: Record<string, number>
+}
+
+export interface DashboardPartnerStats {
+  partner: {
+    id: number
+    name: string
+    company?: string | null
+  }
+  total: number
+}
+
+export interface DashboardSummary {
+  total: number
+  statuses: Record<string, number>
+  projects: DashboardProjectStats[]
+  partners?: DashboardPartnerStats[] | null
+}
+
+export interface LeadDashboardData {
+  my_leads: DashboardSummary
+  partner_leads?: DashboardSummary | null
+}
+
+export interface LeadDashboardParams {
+  q?: string
+  status?: string
+  project_id?: number
+  city?: string
+  partner_id?: number
+  from_date?: string
+  to_date?: string
+}
+
 // Token storage helpers
 export const AuthToken = {
   getAccess: () => localStorage.getItem('maytri_access_token') || '',
@@ -654,6 +695,7 @@ export const ApiService = {
     status?: string
     project_id?: number
     city?: string
+    partner_id?: number
     page?: number
     page_size?: number
   }): Promise<Lead[]> {
@@ -662,6 +704,7 @@ export const ApiService = {
     if (params?.status) query.set('status', params.status)
     if (params?.project_id) query.set('project_id', String(params.project_id))
     if (params?.city) query.set('city', params.city)
+    if (params?.partner_id) query.set('partner_id', String(params.partner_id))
     if (params?.page) query.set('page', String(params.page))
     if (params?.page_size) query.set('page_size', String(params.page_size))
 
@@ -711,6 +754,8 @@ export const ApiService = {
           city: l.city || '',
           project: l.project?.title || '',
           project_id: l.project?.id,
+          partner_id: l.created_by?.id || (l as any).partner_id,
+          created_by_id: l.created_by?.id,
           unitType: l.requirement || '',
           requirement: l.requirement || '',
           budget: '',
@@ -916,6 +961,29 @@ export const ApiService = {
       method: 'POST',
       body: JSON.stringify(data),
     })
+  },
+
+  // Leads: Live Dashboard & Pipeline Aggregation Analytics
+  async getLeadsDashboard(params?: LeadDashboardParams) {
+    const query = new URLSearchParams()
+    if (params?.q) query.set('q', params.q)
+    if (params?.status) query.set('status', params.status)
+    if (params?.project_id) query.set('project_id', String(params.project_id))
+    if (params?.city) query.set('city', params.city)
+    if (params?.partner_id) query.set('partner_id', String(params.partner_id))
+    if (params?.from_date) query.set('from_date', params.from_date)
+    if (params?.to_date) query.set('to_date', params.to_date)
+
+    const qs = query.toString() ? `?${query.toString()}` : ''
+    const res = await apiFetch<any>(`/api/leads/dashboard/${qs}`)
+    if (res.ok && res.data) {
+      const unwrapped: LeadDashboardData = res.data?.data || res.data
+      return {
+        ...res,
+        data: unwrapped,
+      }
+    }
+    return res
   },
 
   // Extra Mock data helpers

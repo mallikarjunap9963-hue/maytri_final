@@ -7,11 +7,13 @@ import { UsersAccountsTab } from '@/components/crm/UsersAccountsTab'
 import { LeadActivitiesTab } from '@/components/crm/LeadActivitiesTab'
 import { ChannelPartnersTab } from '@/components/crm/ChannelPartnersTab'
 import { LeadsPipelineTab } from '@/components/crm/LeadsPipelineTab'
+import { MyLeadsTab } from '@/components/crm/MyLeadsTab'
 import { InventoryTab } from '@/components/crm/InventoryTab'
 import { SiteVisitsTab } from '@/components/crm/SiteVisitsTab'
 import { BookingsTab } from '@/components/crm/BookingsTab'
 import { MyTeamTab } from '@/components/crm/MyTeamTab'
 import { NetworkTreeTab } from '@/components/crm/NetworkTreeTab'
+import { ProjectsTab } from '@/components/crm/ProjectsTab'
 import { AddLeadModal } from '@/components/modals/AddLeadModal'
 import { ScheduleVisitModal } from '@/components/modals/ScheduleVisitModal'
 import { AuthPage } from '@/components/auth/AuthPage'
@@ -46,6 +48,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [selectedProject, setSelectedProject] = useState<string>('ALL')
+  const [selectedPartner, setSelectedPartner] = useState<{ id?: number; name?: string } | null>(null)
 
   // Modals state
   const [isAddLeadOpen, setIsAddLeadOpen] = useState<boolean>(false)
@@ -163,8 +166,7 @@ export function App() {
     setIsAddLeadOpen(true)
   }
 
-  const handleAddLead = (createdLead: Lead) => {
-    showToast(`Lead "${createdLead.name}" created via API and added to project pipeline!`)
+  const handleAddLead = (_createdLead: Lead) => {
     setRefreshKey((prev) => prev + 1)
   }
 
@@ -207,7 +209,7 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 flex flex-col font-sans transition-colors selection:bg-[#2a94b5] selection:text-white">
+    <div className="h-screen bg-white text-slate-900 flex flex-col font-sans transition-colors selection:bg-[#2a94b5] selection:text-white overflow-hidden">
       <ToastContainer />
 
       {/* Header Bar */}
@@ -249,11 +251,16 @@ export function App() {
         <main className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 bg-white min-w-0">
           {activeTab === 'overview' && (
             <OverviewTab
-              onNavigateTab={(tab, project) => {
+              onNavigateTab={(tab, project, partner) => {
                 if (project) {
                   setSelectedProject(project)
                 } else {
                   setSelectedProject('ALL')
+                }
+                if (partner) {
+                  setSelectedPartner(partner)
+                } else {
+                  setSelectedPartner(null)
                 }
                 setActiveTab(tab)
               }}
@@ -267,20 +274,62 @@ export function App() {
             />
           )}
 
-          {activeTab === 'team' && <MyTeamTab />}
+          {activeTab === 'projects' && (
+            <ProjectsTab
+              onNavigateTab={(tab, project) => {
+                if (project) {
+                  setSelectedProject(project)
+                } else {
+                  setSelectedProject('ALL')
+                }
+                const cachedDesig = localStorage.getItem('maytri_profile_designation')
+                const cachedRole = localStorage.getItem('maytri_user_role')
+                const raw = (cachedDesig || currentUser?.role || cachedRole || '').toUpperCase()
+                const isCpHead = raw.includes('HEAD') || raw === 'CP_HEAD' || raw === 'ADMIN'
 
-          {activeTab === 'tree' && <NetworkTreeTab />}
+                if (tab === 'leads' && !isCpHead) {
+                  setActiveTab('myleads')
+                } else {
+                  setActiveTab(tab)
+                }
+              }}
+              onOpenAddLead={handleOpenAddLead}
+              refreshKey={refreshKey}
+            />
+          )}
+
+          {activeTab === 'team' && <MyTeamTab onNavigateTab={setActiveTab} />}
+
+          {activeTab === 'tree' && <NetworkTreeTab onNavigateTab={setActiveTab} />}
+
+          {activeTab === 'myleads' && (
+            <MyLeadsTab
+              refreshKey={refreshKey}
+              onNavigateToDashboard={() => {
+                setActiveTab('overview')
+              }}
+              onScheduleVisitForLead={(lead) => {
+                setTargetLeadForVisit(lead)
+                setIsScheduleVisitOpen(true)
+              }}
+            />
+          )}
 
           {activeTab === 'leads' && (
             <LeadsPipelineTab
               selectedProject={selectedProject}
+              selectedPartner={selectedPartner}
               refreshKey={refreshKey}
               onNavigateToDashboard={() => {
                 setSelectedProject('ALL')
+                setSelectedPartner(null)
                 setActiveTab('overview')
               }}
               onClearProjectFilter={() => {
                 setSelectedProject('ALL')
+              }}
+              onClearPartnerFilter={() => {
+                setSelectedPartner(null)
               }}
               onOpenAddLead={(projName) => handleOpenAddLead(projName)}
               onScheduleVisitForLead={(lead) => {

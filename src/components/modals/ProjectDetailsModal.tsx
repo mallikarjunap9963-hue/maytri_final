@@ -26,6 +26,7 @@ interface ProjectDetailsModalProps {
   isOpen: boolean
   onClose: () => void
   onOpenAddLead?: (projectName?: string) => void
+  onNavigateToLeads?: (projectName: string) => void
 }
 
 export const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({
@@ -34,6 +35,7 @@ export const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({
   isOpen,
   onClose,
   onOpenAddLead,
+  onNavigateToLeads,
 }) => {
   const [selectedMedia, setSelectedMedia] = useState<ProjectMedia | null>(null)
 
@@ -342,7 +344,7 @@ export const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({
         </div>
 
         {/* MODAL FOOTER ACTIONS */}
-        <div className="p-4 px-6 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+        <div className="p-4 px-6 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2.5">
           <Button
             variant="outline"
             onClick={onClose}
@@ -351,18 +353,34 @@ export const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({
             Close
           </Button>
 
-          {onOpenAddLead && (
-            <Button
-              onClick={() => {
-                onClose()
-                onOpenAddLead(project.name)
-              }}
-              className="h-9 bg-[#0092b3] hover:bg-[#007d99] text-white font-extrabold text-xs gap-1.5 rounded-xl px-5 shadow-xs cursor-pointer"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>+ Add Lead For This Project</span>
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {onNavigateToLeads && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  onClose()
+                  onNavigateToLeads(project.name)
+                }}
+                className="h-9 border-cyan-300 text-[#0092b3] hover:bg-cyan-50 font-bold text-xs gap-1.5 rounded-xl px-3.5 cursor-pointer shadow-2xs"
+              >
+                <Users className="h-3.5 w-3.5 text-[#0092b3]" />
+                <span>View Leads</span>
+              </Button>
+            )}
+
+            {onOpenAddLead && (
+              <Button
+                onClick={() => {
+                  onClose()
+                  onOpenAddLead(project.name)
+                }}
+                className="h-9 bg-[#0092b3] hover:bg-[#007d99] text-white font-extrabold text-xs gap-1.5 rounded-xl px-4 shadow-xs cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>+ Add Lead</span>
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 

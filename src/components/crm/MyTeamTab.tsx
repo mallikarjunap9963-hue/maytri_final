@@ -11,17 +11,23 @@ import {
   Check,
   LayoutGrid,
   List,
-  Sparkles,
   Building2,
+  ShieldAlert,
+  Sparkles,
+  UserCheck,
+  ChevronRight,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { ApiService, AuthToken } from '@/services/apiService'
-import { MiniLoader } from '@/components/common/MiniLoader'
 import { TableDataSkeleton } from '@/components/common/Skeletons'
 import { cn } from '@/lib/utils'
+
+interface MyTeamTabProps {
+  onNavigateTab?: (tab: any) => void
+}
 
 export interface TeamMember {
   id: string
@@ -31,7 +37,6 @@ export interface TeamMember {
   phone: string
   email: string
   city: string
-  parentSponsor?: string
   status: 'Active' | 'Pending' | 'Inactive'
   joinDate?: string
 }
@@ -53,11 +58,118 @@ const isApprovedAccount = (item: any): boolean => {
   return false
 }
 
-export const MyTeamTab: React.FC = () => {
+// Robust helper to extract phone number from diverse backend structures
+const extractPhone = (item: any): string => {
+  if (!item) return '-'
+  const candidates = [
+    item.mobile,
+    item.phone,
+    item.mobile_number,
+    item.mobile_no,
+    item.phone_number,
+    item.phone_no,
+    item.contact,
+    item.contact_number,
+    item.contact_no,
+    item.cell,
+    item.whatsapp,
+    item.whatsapp_number,
+    item.registered_mobile,
+    // Nested user
+    item.user?.mobile,
+    item.user?.phone,
+    item.user?.mobile_number,
+    item.user?.mobile_no,
+    item.user?.phone_number,
+    item.user?.phone_no,
+    item.user?.contact_number,
+    item.user?.contact_no,
+    item.user?.registered_mobile,
+    // Nested partner
+    item.partner?.mobile,
+    item.partner?.phone,
+    item.partner?.mobile_number,
+    item.partner?.user?.mobile,
+    item.partner?.user?.phone,
+    // Nested profile
+    item.profile?.mobile,
+    item.profile?.phone,
+    item.profile?.user?.mobile,
+    // Nested kyc
+    item.kyc?.mobile,
+    item.kyc?.phone,
+    item.kyc_details?.mobile,
+    item.kyc_details?.phone,
+    item.kyc_data?.mobile,
+    // User login username fallback if 10-digit mobile
+    item.user?.username,
+    item.username,
+  ]
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim() && c.trim() !== '-') {
+      const clean = c.trim()
+      if (clean.includes('@')) continue
+      const digits = clean.replace(/\D/g, '')
+      if (digits.length >= 10) {
+        return clean
+      }
+      if (clean.length >= 7 && !clean.includes('@')) {
+        return clean
+      }
+    } else if (typeof c === 'number' && c > 10000000) {
+      return String(c)
+    }
+  }
+
+  return '-'
+}
+
+// Robust helper to extract email from diverse backend structures
+const extractEmail = (item: any): string => {
+  if (!item) return '-'
+  const candidates = [
+    item.email,
+    item.user?.email,
+    item.user_email,
+    item.partner?.email,
+    item.partner?.user?.email,
+    item.kyc?.email,
+    item.kyc_details?.email,
+    item.user?.username,
+    item.username,
+  ]
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.includes('@')) {
+      return c.trim()
+    }
+  }
+
+  return '-'
+}
+
+export const MyTeamTab: React.FC<MyTeamTabProps> = ({ onNavigateTab }) => {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('table')
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState<string>('')
+  const [isCpHead, setIsCpHead] = useState<boolean>(true)
+  const [partnerProfile, setPartnerProfile] = useState<{
+    name: string
+    code: string
+    phone: string
+    email: string
+    city: string
+    superior_code?: string
+  }>({
+    name: 'Channel Partner',
+    code: 'MAY-CP-01',
+    phone: '-',
+    email: '-',
+    city: 'Hyderabad',
+  })
 
   const fetchTeamData = async () => {
     setLoading(true)
@@ -82,9 +194,11 @@ export const MyTeamTab: React.FC = () => {
         user?.role ||
         cachedRole ||
         ''
-      const isCpHead =
+      const cpHeadStatus =
         rawType.toUpperCase() === 'CP_HEAD' ||
         rawType.toUpperCase().includes('HEAD')
+
+      setIsCpHead(cpHeadStatus)
 
       const myName =
         profile?.full_name ||
@@ -96,11 +210,21 @@ export const MyTeamTab: React.FC = () => {
         profile?.partner_code ||
         localStorage.getItem('maytri_profile_code') ||
         'MAY-CP-01'
-      const myPhone = profile?.mobile || profile?.phone || user?.mobile || '-'
-      const myEmail = profile?.email || profile?.user?.email || user?.email || '-'
+      const myPhone = extractPhone(profile) || extractPhone(user) || '-'
+      const myEmail = extractEmail(profile) || extractEmail(user) || '-'
       const myCity = profile?.city || 'Hyderabad'
+      const superiorCode = profile?.superior_code || profile?.superiorCode || ''
 
-      if (isCpHead) {
+      setPartnerProfile({
+        name: myName,
+        code: myCode,
+        phone: myPhone,
+        email: myEmail,
+        city: myCity,
+        superior_code: superiorCode,
+      })
+
+      if (cpHeadStatus) {
         // ==========================================
         // 1. CP HEAD LOGIN: Show only APPROVED team members
         // ==========================================
@@ -120,7 +244,6 @@ export const MyTeamTab: React.FC = () => {
             (Array.isArray(teamRes.data) ? teamRes.data : [])
 
           if (Array.isArray(rawItems) && rawItems.length > 0) {
-            // Filter: ONLY show approved accounts
             const approvedItems = rawItems.filter((item: any) => isApprovedAccount(item))
 
             if (approvedItems.length > 0) {
@@ -129,14 +252,14 @@ export const MyTeamTab: React.FC = () => {
                 name:
                   item.full_name ||
                   item.name ||
-                  `${item.first_name || ''} ${item.last_name || ''}`.trim() ||
+                  `${item.first_name || item.user?.first_name || ''} ${item.last_name || item.user?.last_name || ''}`.trim() ||
+                  item.company_name ||
                   'Partner Member',
-                code: item.partner_code || item.code || `MAY-CP-${100 + idx + 1}`,
+                code: item.partner_code || item.cp_code || item.code || `MAY-CP-${100 + idx + 1}`,
                 role: item.role || item.partner_type || 'CHANNEL_PARTNER',
-                phone: item.mobile || item.phone || '-',
-                email: item.email || item.user?.email || '-',
-                city: item.city || 'Hyderabad',
-                parentSponsor: item.superior_code || item.superior_info?.code || profile?.partner_code || undefined,
+                phone: extractPhone(item),
+                email: extractEmail(item),
+                city: item.city || item.user?.city || 'Hyderabad',
                 status: 'Active',
                 joinDate: item.created_at ? item.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
               }))
@@ -157,10 +280,7 @@ export const MyTeamTab: React.FC = () => {
             if (root && Array.isArray(root.children)) {
               root.children.forEach((child: any) => {
                 if (isApprovedAccount(child)) {
-                  extractedChildren.push({
-                    ...child,
-                    superior_code: child.superior_code || root.partner_code || root.code,
-                  })
+                  extractedChildren.push(child)
                 }
               })
             }
@@ -172,14 +292,14 @@ export const MyTeamTab: React.FC = () => {
               name:
                 item.full_name ||
                 item.name ||
-                `${item.first_name || ''} ${item.last_name || ''}`.trim() ||
+                `${item.first_name || item.user?.first_name || ''} ${item.last_name || item.user?.last_name || ''}`.trim() ||
+                item.company_name ||
                 'Channel Partner',
-              code: item.partner_code || item.code || `MAY-CP-${100 + idx + 1}`,
+              code: item.partner_code || item.cp_code || item.code || `MAY-CP-${100 + idx + 1}`,
               role: item.role || item.partner_type || 'CHANNEL_PARTNER',
-              phone: item.mobile || item.phone || '-',
-              email: item.email || item.user?.email || '-',
-              city: item.city || 'Hyderabad',
-              parentSponsor: item.superior_code || profile?.partner_code || undefined,
+              phone: extractPhone(item),
+              email: extractEmail(item),
+              city: item.city || item.user?.city || 'Hyderabad',
               status: 'Active',
               joinDate: item.created_at ? item.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
             }))
@@ -192,28 +312,9 @@ export const MyTeamTab: React.FC = () => {
         setTeamMembers([])
       } else {
         // ==========================================
-        // 2. CHANNEL PARTNER LOGIN: Show ONLY Channel Partner details if approved (NO CP Head data)
+        // 2. CHANNEL PARTNER: Independent partner level (No team downline)
         // ==========================================
-        const isApproved = isApprovedAccount(profile) || profile?.is_approved === true || profile?.is_active !== false
-
-        if (isApproved) {
-          const mySelfMember: TeamMember = {
-            id: String(profile?.id || 'cp-self'),
-            name: myName,
-            code: myCode,
-            role: 'CHANNEL_PARTNER',
-            phone: myPhone,
-            email: myEmail,
-            city: myCity,
-            parentSponsor: profile?.superior_code || profile?.superior_info?.code || undefined,
-            status: 'Active',
-            joinDate: profile?.created_at ? profile.created_at.split('T')[0] : '2026-08-01',
-          }
-
-          setTeamMembers([mySelfMember])
-        } else {
-          setTeamMembers([])
-        }
+        setTeamMembers([])
       }
     } catch {
       setTeamMembers([])
@@ -232,65 +333,165 @@ export const MyTeamTab: React.FC = () => {
     setTimeout(() => setCopiedCode(null), 2000)
   }
 
+  const filteredMembers = teamMembers.filter((m) => {
+    if (!searchQuery) return true
+    const q = searchQuery.toLowerCase()
+    return (
+      m.name.toLowerCase().includes(q) ||
+      m.code.toLowerCase().includes(q) ||
+      m.phone.toLowerCase().includes(q) ||
+      m.email.toLowerCase().includes(q) ||
+      m.city.toLowerCase().includes(q)
+    )
+  })
+
   if (loading) {
-    return <TableDataSkeleton rows={5} columns={5} />
+    return <TableDataSkeleton />
+  }
+
+  // ==========================================
+  // CHANNEL PARTNER VIEW (NO TEAM REQUIRED)
+  // ==========================================
+  if (!isCpHead) {
+    return (
+      <div className="space-y-6 max-w-5xl mx-auto font-sans selection:bg-[#0092b3] selection:text-white animate-in fade-in duration-300">
+        {/* Header banner / Info card */}
+        <div className="relative overflow-hidden rounded-3xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50/60 to-cyan-50/40 p-6 sm:p-10 shadow-xs">
+          <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-[#0092b3]/10 blur-3xl pointer-events-none" />
+          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <div className="space-y-3.5 max-w-2xl">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0092b3]/10 text-[#0092b3] border border-[#0092b3]/20 text-xs font-bold uppercase tracking-wider">
+                <ShieldAlert className="h-3.5 w-3.5" />
+                <span>Channel Partner Account</span>
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                No Team Management Required
+              </h2>
+              <p className="text-sm text-slate-600 leading-relaxed font-medium">
+                As an independent <span className="font-bold text-slate-900">Channel Partner</span>, team management and downline partner networks are exclusively configured for <span className="font-bold text-[#0092b3]">Channel Partner Heads (CP Heads)</span>.
+              </p>
+              <p className="text-xs text-slate-500 leading-relaxed font-normal">
+                You have direct access to register buyer leads, schedule site visits, track deals, and browse project inventories without managing a partner hierarchy.
+              </p>
+            </div>
+
+            {/* Account Info Pill */}
+            <div className="shrink-0 bg-white/95 backdrop-blur-xs border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3 min-w-[260px]">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2">
+                Your Partner Profile
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-semibold">Name:</span>
+                  <span className="text-slate-900 font-bold">{partnerProfile.name}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-semibold">Partner Code:</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyCode(partnerProfile.code)}
+                    className="font-mono font-bold text-[#0092b3] bg-cyan-50 hover:bg-cyan-100 px-2 py-0.5 rounded flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <span>{partnerProfile.code}</span>
+                    {copiedCode === partnerProfile.code ? (
+                      <Check className="h-3 w-3 text-emerald-600" />
+                    ) : (
+                      <Copy className="h-3 w-3 text-slate-400" />
+                    )}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-semibold">Designation:</span>
+                  <span className="text-slate-700 font-bold">Channel Partner</span>
+                </div>
+                {partnerProfile.superior_code && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-500 font-semibold">Superior Code:</span>
+                    <span className="font-mono font-bold text-slate-700">{partnerProfile.superior_code}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-semibold">Status:</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Active
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="space-y-6 font-sans text-slate-800 animate-in fade-in duration-200">
-      {/* UNIFIED MY TEAM CARD */}
-      <Card className="border border-slate-200 shadow-sm bg-white overflow-hidden rounded-2xl">
-        {/* CARD HEADER WITH TITLE, SUBTITLE & VIEW TOGGLE / REFRESH */}
-        <CardHeader className="flex flex-col lg:flex-row lg:items-center lg:justify-between pb-4 pt-4 px-5 border-b border-slate-100 gap-3">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <div className="h-9 w-9 rounded-xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold shrink-0">
-                <Users className="h-5 w-5" />
-              </div>
-              <div>
-                <CardTitle className="text-base font-extrabold text-slate-900 tracking-tight">
-                  My Team
-                </CardTitle>
-                <CardDescription className="text-xs font-semibold text-slate-500 mt-0.5">
-                  Channel partner network members, sponsor codes, and contact details
-                </CardDescription>
-              </div>
+    <div className="space-y-6 text-slate-900 animate-in fade-in duration-200">
+      {/* HEADER CARD */}
+      <Card className="border border-slate-200 shadow-sm bg-white rounded-2xl overflow-hidden">
+        <CardHeader className="py-4 px-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50/50">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold shadow-xs">
+              <Users className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-base font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                My Team
+              </CardTitle>
+              <CardDescription className="text-xs font-semibold text-slate-500 mt-0.5">
+                Channel partner network members and contact details
+              </CardDescription>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Grid / Table Toggle */}
-            <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-0.5">
+            {/* Search Input */}
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+              <Input
+                type="text"
+                placeholder="Search team partners..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8.5 pr-3 h-8.5 text-xs bg-white rounded-xl border-slate-200 focus-visible:ring-[#0092b3]"
+              />
+            </div>
+
+            {/* View Mode Toggle */}
+            <div className="flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200">
               <button
                 type="button"
                 onClick={() => setViewMode('table')}
                 className={cn(
-                  'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer',
-                  viewMode === 'table' ? 'bg-[#0092b3] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  'px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer',
+                  viewMode === 'table'
+                    ? 'bg-white text-[#0092b3] shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900'
                 )}
               >
                 <List className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Table</span>
+                <span>Table</span>
               </button>
               <button
                 type="button"
                 onClick={() => setViewMode('grid')}
                 className={cn(
-                  'flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer',
-                  viewMode === 'grid' ? 'bg-[#0092b3] text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  'px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer',
+                  viewMode === 'grid'
+                    ? 'bg-white text-[#0092b3] shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900'
                 )}
               >
                 <LayoutGrid className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Cards</span>
+                <span>Cards</span>
               </button>
             </div>
 
             {/* Refresh Button */}
             <Button
+              onClick={fetchTeamData}
               variant="outline"
               size="sm"
-              onClick={fetchTeamData}
-              className="h-8.5 px-3 border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs gap-1.5 rounded-xl cursor-pointer"
+              className="h-8.5 border-slate-200 text-slate-700 hover:text-[#0092b3] hover:bg-slate-50 font-bold text-xs gap-1.5 rounded-xl px-3 cursor-pointer shadow-2xs"
             >
               <RefreshCw className="h-3.5 w-3.5 text-[#0092b3]" />
               <span>Refresh</span>
@@ -300,7 +501,7 @@ export const MyTeamTab: React.FC = () => {
 
         {/* CARD CONTENT: TABLE, GRID, OR EMPTY STATE */}
         <CardContent className={cn(viewMode === 'table' ? 'p-0 overflow-x-auto' : 'p-5')}>
-          {teamMembers.length === 0 ? (
+          {filteredMembers.length === 0 ? (
             <div className="p-12 text-center space-y-3">
               <div className="h-12 w-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
                 <Users className="h-6 w-6" />
@@ -308,26 +509,27 @@ export const MyTeamTab: React.FC = () => {
               <div className="space-y-1">
                 <h3 className="text-sm font-bold text-slate-900">No Approved Team Members Found</h3>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto font-medium">
-                  Your team list displays verified and approved channel partners registered under your sponsor network.
+                  Your team list displays verified and approved channel partners registered under your network.
                 </p>
               </div>
             </div>
           ) : viewMode === 'table' ? (
-            <table className="w-full text-left text-xs border-collapse min-w-[720px]">
+            <table className="w-full text-left text-xs border-collapse min-w-[620px]">
               <thead>
                 <tr className="bg-[#0092b3] text-white font-bold text-[11px] tracking-wide">
                   <th className="py-3.5 px-5">Partner Name</th>
                   <th className="py-3.5 px-4">Partner Code</th>
                   <th className="py-3.5 px-4">Role</th>
-                  <th className="py-3.5 px-4">Contact Details</th>
-                  <th className="py-3.5 px-4">City</th>
-                  <th className="py-3.5 px-4">Sponsor Code</th>
+                  <th className="py-3.5 px-4">Email</th>
+                  <th className="py-3.5 px-4">Mobile Number</th>
                   <th className="py-3.5 px-4 text-center">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {teamMembers.map((member, idx) => {
+                {filteredMembers.map((member, idx) => {
                   const isHead = member.role === 'CP_HEAD' || member.role.toLowerCase().includes('head')
+                  const hasPhone = member.phone && member.phone !== '-'
+                  const hasEmail = member.email && member.email !== '-'
 
                   return (
                     <tr
@@ -349,13 +551,14 @@ export const MyTeamTab: React.FC = () => {
                             {member.name
                               .split(' ')
                               .map((n) => n[0])
+                              .filter(Boolean)
                               .slice(0, 2)
                               .join('')
-                              .toUpperCase()}
+                              .toUpperCase() || 'CP'}
                           </div>
                           <div>
                             <p className="font-extrabold text-xs text-slate-900">{member.name}</p>
-                            <p className="text-[10px] text-slate-400">Joined: {member.joinDate || '2026-08-01'}</p>
+                            <p className="text-[10px] text-slate-400">Joined: {member.joinDate || '2026-08-18'}</p>
                           </div>
                         </div>
                       </td>
@@ -391,28 +594,32 @@ export const MyTeamTab: React.FC = () => {
                         </span>
                       </td>
 
-                      {/* Contact Info */}
-                      <td className="py-3.5 px-4 space-y-0.5">
-                        <div className="flex items-center gap-1.5 text-[11px]">
-                          <Phone className="h-3 w-3 text-slate-400 shrink-0" />
-                          <a href={`tel:${member.phone}`} className="font-bold text-slate-800 hover:underline">
-                            {member.phone}
-                          </a>
-                        </div>
-                        {member.email && member.email !== '-' && (
-                          <div className="flex items-center gap-1.5 text-[10.5px] text-slate-500">
-                            <Mail className="h-3 w-3 text-slate-400 shrink-0" />
-                            <span className="truncate max-w-[150px]">{member.email}</span>
+                      {/* Email */}
+                      <td className="py-3.5 px-4">
+                        {hasEmail ? (
+                          <div className="flex items-center gap-1.5 text-[11px] text-slate-700">
+                            <Mail className="h-3.5 w-3.5 text-[#0092b3] shrink-0" />
+                            <a href={`mailto:${member.email}`} className="truncate max-w-[200px] font-semibold hover:text-[#0092b3] hover:underline">
+                              {member.email}
+                            </a>
                           </div>
+                        ) : (
+                          <span className="text-slate-400 text-xs italic">-</span>
                         )}
                       </td>
 
-                      {/* City */}
-                      <td className="py-3.5 px-4 text-slate-700 font-semibold">{member.city}</td>
-
-                      {/* Sponsor Code */}
-                      <td className="py-3.5 px-4 font-mono text-[11px] font-semibold text-slate-600">
-                        {member.parentSponsor || '-'}
+                      {/* Mobile Number */}
+                      <td className="py-3.5 px-4">
+                        {hasPhone ? (
+                          <div className="flex items-center gap-1.5 text-[11px]">
+                            <Phone className="h-3.5 w-3.5 text-[#0092b3] shrink-0" />
+                            <a href={`tel:${member.phone}`} className="font-bold text-slate-900 hover:text-[#0092b3] hover:underline">
+                              {member.phone}
+                            </a>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-xs italic">-</span>
+                        )}
                       </td>
 
                       {/* Status */}
@@ -428,8 +635,10 @@ export const MyTeamTab: React.FC = () => {
             </table>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-              {teamMembers.map((member) => {
+              {filteredMembers.map((member) => {
                 const isHead = member.role === 'CP_HEAD' || member.role.toLowerCase().includes('head')
+                const hasPhone = member.phone && member.phone !== '-'
+                const hasEmail = member.email && member.email !== '-'
 
                 return (
                   <Card
@@ -447,9 +656,10 @@ export const MyTeamTab: React.FC = () => {
                           {member.name
                             .split(' ')
                             .map((n) => n[0])
+                            .filter(Boolean)
                             .slice(0, 2)
                             .join('')
-                            .toUpperCase()}
+                            .toUpperCase() || 'CP'}
                         </div>
                         <div>
                           <h4 className="font-extrabold text-sm text-slate-900 leading-tight">{member.name}</h4>
@@ -486,17 +696,21 @@ export const MyTeamTab: React.FC = () => {
                         </button>
                       </div>
 
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">Mobile:</span>
-                        <a href={`tel:${member.phone}`} className="font-bold text-slate-900 hover:underline">
-                          {member.phone}
-                        </a>
-                      </div>
+                      {hasPhone && (
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">Mobile:</span>
+                          <a href={`tel:${member.phone}`} className="font-bold text-slate-900 hover:text-[#0092b3] hover:underline">
+                            {member.phone}
+                          </a>
+                        </div>
+                      )}
 
-                      {member.email && member.email !== '-' && (
+                      {hasEmail && (
                         <div className="flex items-center justify-between text-slate-600">
                           <span className="text-[10px] font-bold text-slate-400 uppercase">Email:</span>
-                          <span className="font-semibold text-slate-800 truncate max-w-[140px]">{member.email}</span>
+                          <a href={`mailto:${member.email}`} className="font-semibold text-slate-800 truncate max-w-[160px] hover:text-[#0092b3] hover:underline">
+                            {member.email}
+                          </a>
                         </div>
                       )}
 
@@ -504,13 +718,6 @@ export const MyTeamTab: React.FC = () => {
                         <span className="text-[10px] font-bold text-slate-400 uppercase">City:</span>
                         <span className="font-semibold text-slate-800">{member.city}</span>
                       </div>
-
-                      {member.parentSponsor && (
-                        <div className="flex items-center justify-between text-slate-600 border-t border-slate-200/60 pt-1 mt-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase">Sponsor Code:</span>
-                          <span className="font-mono font-bold text-[#0092b3]">{member.parentSponsor}</span>
-                        </div>
-                      )}
                     </div>
                   </Card>
                 )

@@ -35,7 +35,7 @@ import {
   Mail,
   Edit3,
 } from 'lucide-react'
-import { ApiService } from '@/services/apiService'
+import { ApiService, AuthToken } from '@/services/apiService'
 import { cn } from '@/lib/utils'
 
 interface WelcomeKycPageProps {
@@ -394,7 +394,7 @@ export const WelcomeKycPage: React.FC<WelcomeKycPageProps> = ({
       const prefix = email.split('@')[0]
       const words = prefix.replace(/[._0-9]/g, ' ').trim().split(/\s+/).filter(Boolean)
       if (words.length > 0) {
-        return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+        return words.map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
       }
     }
 

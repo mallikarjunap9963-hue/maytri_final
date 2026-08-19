@@ -1,16 +1,22 @@
+import React, { useState, useEffect } from 'react'
 import {
   LayoutDashboard,
+  Building2,
   Users,
+  UserCheck,
   GitFork,
   PhoneCall,
 } from 'lucide-react'
+import { ApiService, AuthToken } from '@/services/apiService'
 import { cn } from '@/lib/utils'
 
 export type TabType =
   | 'overview'
+  | 'projects'
+  | 'myleads'
+  | 'leads'
   | 'team'
   | 'tree'
-  | 'leads'
   | 'users'
   | 'activities'
   | 'partners'
@@ -30,6 +36,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
 }) => {
+  const [isCpHead, setIsCpHead] = useState<boolean>(() => {
+    const cachedDesig = localStorage.getItem('maytri_profile_designation')
+    const cachedRole = localStorage.getItem('maytri_user_role')
+    const user = AuthToken.getUser()
+    const raw = (cachedDesig || user?.role || cachedRole || '').toUpperCase()
+    return raw.includes('HEAD') || raw === 'CP_HEAD' || raw === 'ADMIN'
+  })
+
+  useEffect(() => {
+    ApiService.getPartnerProfile().then((res) => {
+      if (res?.ok && res.data) {
+        const p = res.data?.data || res.data?.profile || res.data
+        const rawType = (p?.partner_type || p?.designation || p?.role || '').toUpperCase()
+        const cpHeadStatus = rawType === 'CP_HEAD' || rawType.includes('HEAD') || rawType === 'ADMIN'
+        setIsCpHead(cpHeadStatus)
+      }
+    })
+  }, [])
+
   const menuItems = [
     {
       id: 'overview' as TabType,
@@ -38,9 +63,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: null,
     },
     {
-      id: 'leads' as TabType,
-      label: 'Leads',
-      icon: Users,
+      id: 'projects' as TabType,
+      label: 'Projects',
+      icon: Building2,
+      badge: null,
+    },
+    // Only show "All Leads" if CP Head
+    ...(isCpHead
+      ? [
+          {
+            id: 'leads' as TabType,
+            label: 'All Leads',
+            icon: Users,
+            badge: null,
+          },
+        ]
+      : []),
+    {
+      id: 'myleads' as TabType,
+      label: 'My Leads',
+      icon: UserCheck,
       badge: null,
     },
     {
@@ -51,14 +93,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'tree' as TabType,
-      label: 'Network Tree',
+      label: 'My Network',
       icon: GitFork,
       badge: null,
     },
   ]
 
   return (
-    <aside className="w-64 shrink-0 border-r border-slate-200 bg-white flex flex-col justify-between p-4 py-6 hidden md:flex">
+    <aside className="w-64 shrink-0 border-r border-slate-200 bg-white flex flex-col justify-between p-4 py-6 hidden md:flex sticky top-16 sm:top-18 h-[calc(100vh-4rem)] sm:h-[calc(100vh-4.5rem)] overflow-y-auto z-30">
       {/* Navigation Links */}
       <div className="space-y-6">
         <div>
@@ -120,3 +162,5 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </aside>
   )
 }
+
+export default Sidebar

@@ -3,7 +3,6 @@ import {
   Plus,
   Phone,
   Calendar,
-  Search,
   Users,
   LayoutDashboard,
   Eye,
@@ -14,6 +13,7 @@ import {
   Building2,
   Layers,
   Filter,
+  UserCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -26,7 +26,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import type { Lead } from '@/data/appData'
+import type { Lead, Project } from '@/data/appData'
 import { ApiService } from '@/services/apiService'
 import { MiniLoader } from '@/components/common/MiniLoader'
 import { LeadsTableSkeleton } from '@/components/common/Skeletons'
@@ -37,7 +37,9 @@ import { cn } from '@/lib/utils'
 interface LeadsPipelineTabProps {
   searchQuery?: string
   selectedProject?: string
+  selectedPartner?: { id?: number; name?: string } | null
   onClearProjectFilter?: () => void
+  onClearPartnerFilter?: () => void
   onOpenAddLead?: (projectName?: string) => void
   onScheduleVisitForLead?: (lead: Lead) => void
   onNavigateToDashboard?: () => void
@@ -119,15 +121,20 @@ const isLeadMatchingProject = (lead: Lead, projectFilterName: string): boolean =
 export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
   searchQuery: externalSearch = '',
   selectedProject = 'ALL',
+  selectedPartner = null,
   onClearProjectFilter,
+  onClearPartnerFilter,
   onOpenAddLead,
   onScheduleVisitForLead,
   onNavigateToDashboard,
   refreshKey,
 }) => {
   const [leads, setLeads] = useState<Lead[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [stageFilter, setStageFilter] = useState<string>('ALL')
+  const [internalProjectFilter, setInternalProjectFilter] = useState<string>(selectedProject || 'ALL')
+  const [internalPartnerFilter, setInternalPartnerFilter] = useState<string>(selectedPartner?.name || 'ALL')
   const [internalSearch, setInternalSearch] = useState<string>('')
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [currentPage, setCurrentPage] = useState<number>(1)
@@ -142,13 +149,28 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
   const [editNotes, setEditNotes] = useState<string>('')
   const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false)
 
-  const isIndividualProjectMode = Boolean(selectedProject && selectedProject !== 'ALL')
+  // Synchronize when external props change
+  useEffect(() => {
+    if (selectedProject) {
+      setInternalProjectFilter(selectedProject)
+    }
+  }, [selectedProject])
+
+  useEffect(() => {
+    if (selectedPartner?.name) {
+      setInternalPartnerFilter(selectedPartner.name)
+    }
+  }, [selectedPartner?.name])
 
   const fetchLeadsData = async () => {
     setLoading(true)
     try {
-      const leadsData = await ApiService.getLeads().catch(() => [])
+      const [leadsData, projectsData] = await Promise.all([
+        ApiService.getLeads().catch(() => []),
+        ApiService.getProjects().catch(() => []),
+      ])
       setLeads(leadsData || [])
+      setProjects(projectsData || [])
     } catch (err) {
       console.warn('Error loading leads from backend:', err)
       setLeads([])
@@ -159,11 +181,46 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
 
   useEffect(() => {
     fetchLeadsData()
-  }, [refreshKey])
+  }, [refreshKey, selectedPartner?.id])
 
   const effectiveSearch = (externalSearch || internalSearch).toLowerCase().trim()
 
-  // Filter leads: Strictly by selected project (if in individual mode) and search & status
+  // Extract unique available projects from fetched projects & leads
+  const availableProjects = React.useMemo(() => {
+    const set = new Set<string>()
+    if (selectedProject && selectedProject !== 'ALL') {
+      set.add(selectedProject)
+    }
+    projects.forEach((p) => {
+      if (p.name) set.add(p.name)
+    })
+    leads.forEach((l) => {
+      if (l.project) set.add(l.project)
+    })
+    return Array.from(set).sort()
+  }, [projects, leads, selectedProject])
+
+  // Extract unique available channel partners from leads
+  const availablePartners = React.useMemo(() => {
+    const set = new Set<string>()
+    leads.forEach((l) => {
+      if (l.assignedTo && l.assignedTo.trim() !== '-' && l.assignedTo.trim().length > 1) {
+        set.add(l.assignedTo.trim())
+      }
+      if (
+        l.source &&
+        l.source.trim() !== '-' &&
+        l.source.trim().length > 1 &&
+        !l.source.toLowerCase().includes('direct') &&
+        !l.source.toLowerCase().includes('website')
+      ) {
+        set.add(l.source.trim())
+      }
+    })
+    return Array.from(set).sort()
+  }, [leads])
+
+  // Filter leads: By selected project, partner, stage and search
   const filteredLeads = React.useMemo(() => {
     const seen = new Set<string>()
     return leads
@@ -175,10 +232,21 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
         return true
       })
       .filter((lead) => {
-        // Project matching: If individual project mode, show ONLY this project's leads
-        const matchesProject = isIndividualProjectMode
-          ? isLeadMatchingProject(lead, selectedProject)
-          : true
+        // Project matching
+        const matchesProject =
+          internalProjectFilter === 'ALL'
+            ? true
+            : isLeadMatchingProject(lead, internalProjectFilter)
+
+        // Partner matching
+        const matchesPartner =
+          internalPartnerFilter === 'ALL'
+            ? true
+            : (lead.assignedTo &&
+                lead.assignedTo.toLowerCase() === internalPartnerFilter.toLowerCase()) ||
+              (lead.source &&
+                lead.source.toLowerCase() === internalPartnerFilter.toLowerCase()) ||
+              (lead.partner_id && String(lead.partner_id) === internalPartnerFilter)
 
         // Stage matching
         const matchesStage = stageFilter === 'ALL' || lead.stage === stageFilter
@@ -193,16 +261,16 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
           (lead.project && lead.project.toLowerCase().includes(effectiveSearch)) ||
           (lead.requirement && lead.requirement.toLowerCase().includes(effectiveSearch))
 
-        return matchesProject && matchesStage && matchesSearch
+        return matchesProject && matchesPartner && matchesStage && matchesSearch
       })
-  }, [leads, effectiveSearch, selectedProject, isIndividualProjectMode, stageFilter])
+  }, [leads, effectiveSearch, internalProjectFilter, internalPartnerFilter, stageFilter])
 
   const totalPages = Math.ceil(filteredLeads.length / pageSize) || 1
   const paginatedLeads = filteredLeads.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [effectiveSearch, selectedProject, stageFilter])
+  }, [effectiveSearch, internalProjectFilter, internalPartnerFilter, stageFilter])
 
   // Move lead stage helper and sync with backend
   const handleMoveStage = async (leadId: string, newStage: Lead['stage']) => {
@@ -324,8 +392,8 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
     <div className="space-y-4 font-sans text-slate-800 animate-in fade-in duration-200">
       {/* INTEGRATED CLEAN TOOLBAR */}
       <div className="bg-white p-3.5 px-4 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        {/* Left Side: Navigation & Mode Indicator */}
-        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+        {/* Left Side: Navigation & Indicator */}
+        <div className="flex flex-wrap items-center gap-2.5">
           {onNavigateToDashboard && (
             <Button
               variant="outline"
@@ -338,52 +406,53 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
             </Button>
           )}
 
-          {/* If viewing individual project leads, show project badge with View All button */}
-          {isIndividualProjectMode ? (
-            <div className="flex items-center gap-2 bg-[#0092b3]/10 text-[#0092b3] px-3 py-1.5 rounded-xl border border-[#0092b3]/20">
-              <Building2 className="h-4 w-4" />
-              <span className="text-xs font-black">{selectedProject} Leads</span>
-              {onClearProjectFilter && (
-                <button
-                  onClick={onClearProjectFilter}
-                  className="ml-1 text-[11px] font-bold underline hover:text-[#007d99] cursor-pointer"
-                  title="Show all project leads"
-                >
-                  View All
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 text-slate-700 text-xs font-extrabold px-2">
-              <Layers className="h-4 w-4 text-[#0092b3]" />
-              <span>All Projects Pipeline</span>
-            </div>
-          )}
-
-          {/* Search Bar */}
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              value={internalSearch}
-              onChange={(e) => setInternalSearch(e.target.value)}
-              placeholder={isIndividualProjectMode ? `Search ${selectedProject} leads...` : 'Search all leads...'}
-              className="w-full h-9 pl-9 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0092b3] focus:bg-white"
-            />
-            {internalSearch && (
-              <button
-                onClick={() => setInternalSearch('')}
-                className="absolute right-3 top-2 text-xs font-bold text-slate-400 hover:text-slate-700"
-              >
-                ✕
-              </button>
-            )}
+          <div className="flex items-center gap-1.5 text-slate-700 text-xs font-extrabold px-1">
+            <Users className="h-4 w-4 text-[#0092b3]" />
+            <span>All Leads</span>
           </div>
         </div>
 
-        {/* Right Side: Status Filter, Refresh & Add Lead */}
+        {/* Right Side: Project Filter, Partner Filter, Status Filter & Refresh */}
         <div className="flex flex-wrap items-center gap-2.5 justify-between sm:justify-end">
-          {/* Status Filter */}
+          {/* Project Dropdown Filter */}
+          <select
+            value={internalProjectFilter}
+            onChange={(e) => setInternalProjectFilter(e.target.value)}
+            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0092b3] cursor-pointer shadow-2xs"
+          >
+            <option value="ALL">All Projects ({availableProjects.length})</option>
+            {availableProjects.map((pName) => {
+              const count = leads.filter((l) => isLeadMatchingProject(l, pName)).length
+              return (
+                <option key={pName} value={pName}>
+                  {pName} ({count})
+                </option>
+              )
+            })}
+          </select>
+
+          {/* Channel Partner Dropdown Filter */}
+          <select
+            value={internalPartnerFilter}
+            onChange={(e) => setInternalPartnerFilter(e.target.value)}
+            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0092b3] cursor-pointer shadow-2xs"
+          >
+            <option value="ALL">All Partners ({availablePartners.length})</option>
+            {availablePartners.map((partName) => {
+              const count = leads.filter(
+                (l) =>
+                  (l.assignedTo && l.assignedTo.toLowerCase() === partName.toLowerCase()) ||
+                  (l.source && l.source.toLowerCase() === partName.toLowerCase())
+              ).length
+              return (
+                <option key={partName} value={partName}>
+                  {partName} ({count})
+                </option>
+              )
+            })}
+          </select>
+
+          {/* Status Filter Dropdown */}
           <select
             value={stageFilter}
             onChange={(e) => setStageFilter(e.target.value)}
@@ -393,7 +462,13 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
             {STAGES.map((s) => {
               const count = leads.filter(
                 (l) =>
-                  (isIndividualProjectMode ? isLeadMatchingProject(l, selectedProject) : true) &&
+                  (internalProjectFilter === 'ALL' ||
+                    isLeadMatchingProject(l, internalProjectFilter)) &&
+                  (internalPartnerFilter === 'ALL' ||
+                    (l.assignedTo &&
+                      l.assignedTo.toLowerCase() === internalPartnerFilter.toLowerCase()) ||
+                    (l.source &&
+                      l.source.toLowerCase() === internalPartnerFilter.toLowerCase())) &&
                   l.stage === s
               ).length
               return (
@@ -425,13 +500,13 @@ export const LeadsPipelineTab: React.FC<LeadsPipelineTabProps> = ({
           </div>
           <div className="space-y-1">
             <h3 className="text-sm font-bold text-slate-900">
-              {isIndividualProjectMode ? `No Leads for ${selectedProject}` : 'No Prospective Buyer Leads Found'}
+              {internalProjectFilter !== 'ALL' ? `No Leads for ${internalProjectFilter}` : 'No Prospective Buyer Leads Found'}
             </h3>
             <p className="text-xs text-slate-500 max-w-sm mx-auto font-medium">
               {effectiveSearch
                 ? 'No leads matched your search keyword.'
-                : isIndividualProjectMode
-                ? `No prospective leads have been assigned to ${selectedProject} yet.`
+                : internalProjectFilter !== 'ALL'
+                ? `No prospective leads have been assigned to ${internalProjectFilter} yet.`
                 : 'No leads available across projects.'}
             </p>
           </div>

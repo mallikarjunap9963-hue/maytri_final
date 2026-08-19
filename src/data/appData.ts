@@ -64,6 +64,8 @@ export interface Lead {
   requirement?: string
   follow_up_date?: string
   rawId?: number | string
+  partner_id?: number
+  created_by_id?: number
 }
 
 export interface InventoryItem {

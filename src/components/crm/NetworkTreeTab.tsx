@@ -11,12 +11,21 @@ import {
   ChevronRight,
   Maximize2,
   Minimize2,
+  ShieldAlert,
+  Sparkles,
+  Check,
+  Copy,
 } from 'lucide-react'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ApiService, AuthToken } from '@/services/apiService'
 import { NetworkTreeSkeleton } from '@/components/common/Skeletons'
 import { cn } from '@/lib/utils'
+
+interface NetworkTreeTabProps {
+  onNavigateTab?: (tab: any) => void
+}
 
 export interface PartnerNode {
   id: string | number
@@ -181,11 +190,21 @@ const OrgChartNode: React.FC<OrgChartNodeProps> = ({ node, defaultExpanded = tru
   )
 }
 
-export const NetworkTreeTab: React.FC = () => {
+export const NetworkTreeTab: React.FC<NetworkTreeTabProps> = ({ onNavigateTab }) => {
   const [partnerNodes, setPartnerNodes] = useState<PartnerNode[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [expandAll, setExpandAll] = useState(true)
+  const [isCpHead, setIsCpHead] = useState<boolean>(true)
+  const [copiedCode, setCopiedCode] = useState<string | null>(null)
+  const [partnerProfile, setPartnerProfile] = useState<{
+    name: string
+    code: string
+    superior_code?: string
+  }>({
+    name: 'Channel Partner',
+    code: 'CP-101',
+  })
 
   const loadTreeData = async () => {
     setLoading(true)
@@ -211,30 +230,39 @@ export const NetworkTreeTab: React.FC = () => {
         user?.role ||
         cachedRole ||
         ''
-      const isCpHead =
+      const cpHeadStatus =
         rawType.toUpperCase() === 'CP_HEAD' ||
         rawType.toUpperCase().includes('HEAD')
+
+      setIsCpHead(cpHeadStatus)
 
       const myName =
         profile?.full_name ||
         `${profile?.user?.first_name || user?.first_name || ''} ${profile?.user?.last_name || user?.last_name || ''}`.trim() ||
         localStorage.getItem('maytri_profile_name') ||
         localStorage.getItem('maytri_last_user_name') ||
-        (isCpHead ? 'POKALA REDDY' : 'Channel Partner')
+        (cpHeadStatus ? 'POKALA REDDY' : 'Channel Partner')
       const myCode =
         profile?.partner_code ||
         localStorage.getItem('maytri_profile_code') ||
-        (isCpHead ? 'MAYTRIA02' : 'CP-101')
+        (cpHeadStatus ? 'MAYTRIA02' : 'CP-101')
       const myEmail = profile?.user?.email || user?.email || profile?.email || ''
+      const superiorCode = profile?.superior_code || profile?.superiorCode || ''
+
+      setPartnerProfile({
+        name: myName,
+        code: myCode,
+        superior_code: superiorCode,
+      })
 
       let builtNodes: PartnerNode[] = []
 
-      if (isCpHead) {
+      if (cpHeadStatus) {
         // ==========================================
         // 1. CP HEAD LOGIN: Full Tree & Approved Downlines
         // ==========================================
         if (treeRes && treeRes.ok && treeRes.data) {
-          const raw = treeRes.data.data || treeRes.data.items || treeRes.data
+          const raw = treeRes.data.data || treeRes.data.tree || treeRes.data.items || treeRes.data
           if (Array.isArray(raw) && raw.length > 0) {
             builtNodes = raw
               .filter((item: any) => isApprovedAccount(item))
@@ -312,70 +340,9 @@ export const NetworkTreeTab: React.FC = () => {
         }
       } else {
         // ==========================================
-        // 2. CHANNEL PARTNER LOGIN: Show ONLY Channel Partner details (NO CP Head data)
+        // 2. CHANNEL PARTNER LOGIN: Independent partner level
         // ==========================================
-        const isApproved = isApprovedAccount(profile) || profile?.is_approved === true || profile?.is_active !== false
-
-        if (isApproved) {
-          let cpChildren: PartnerNode[] = []
-
-          if (treeRes && treeRes.ok && treeRes.data) {
-            const treeData = treeRes.data.data || treeRes.data.tree || treeRes.data.items || treeRes.data
-            const treeList = Array.isArray(treeData) ? treeData : [treeData]
-
-            const findPartnerNode = (nodes: any[]): any => {
-              for (const n of nodes) {
-                if (!n) continue
-                if (
-                  n.partner_code === myCode ||
-                  n.code === myCode ||
-                  n.id === profile?.id ||
-                  String(n.full_name || n.name || '').toLowerCase() === myName.toLowerCase()
-                ) {
-                  return n
-                }
-                if (n.children && Array.isArray(n.children)) {
-                  const found = findPartnerNode(n.children)
-                  if (found) return found
-                }
-              }
-              return null
-            }
-
-            const partnerTree = findPartnerNode(treeList)
-            if (partnerTree && partnerTree.children && Array.isArray(partnerTree.children)) {
-              cpChildren = partnerTree.children
-                .filter((c: any) => isApprovedAccount(c))
-                .map((c: any, cIdx: number) => ({
-                  id: c.id || `cp-sub-${cIdx + 1}`,
-                  code: c.partner_code || c.code || `CP-${cIdx + 101}`,
-                  name:
-                    c.full_name ||
-                    c.name ||
-                    `${c.first_name || ''} ${c.last_name || ''}`.trim() ||
-                    'Channel Partner',
-                  role: 'CHANNEL_PARTNER',
-                  email: c.user?.email || c.email || '',
-                  teamCount: c.children ? c.children.length : 0,
-                  children: [],
-                }))
-            }
-          }
-
-          builtNodes = [
-            {
-              id: profile?.id || 'cp-self',
-              code: myCode,
-              name: myName,
-              role: 'CHANNEL_PARTNER',
-              email: myEmail,
-              teamCount: cpChildren.length,
-              children: cpChildren,
-            },
-          ]
-        } else {
-          builtNodes = []
-        }
+        builtNodes = []
       }
 
       setPartnerNodes(builtNodes)
@@ -390,6 +357,12 @@ export const NetworkTreeTab: React.FC = () => {
   useEffect(() => {
     loadTreeData()
   }, [])
+
+  const handleCopyCode = (code: string) => {
+    navigator.clipboard.writeText(code)
+    setCopiedCode(code)
+    setTimeout(() => setCopiedCode(null), 2000)
+  }
 
   // Filter tree nodes matching search query
   const filterTreeNodes = (nodes: PartnerNode[], query: string): PartnerNode[] => {
@@ -418,6 +391,81 @@ export const NetworkTreeTab: React.FC = () => {
 
   if (loading) {
     return <NetworkTreeSkeleton />
+  }
+
+  // ==========================================
+  // CHANNEL PARTNER VIEW (NO NETWORK TREE REQUIRED)
+  // ==========================================
+  if (!isCpHead) {
+    return (
+      <div className="space-y-6 max-w-5xl mx-auto font-sans selection:bg-[#0092b3] selection:text-white animate-in fade-in duration-300">
+        {/* Header banner / Info card */}
+        <div className="relative overflow-hidden rounded-3xl border border-slate-200/90 bg-gradient-to-br from-white via-slate-50/60 to-cyan-50/40 p-6 sm:p-10 shadow-xs">
+          <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-[#0092b3]/10 blur-3xl pointer-events-none" />
+          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <div className="space-y-3.5 max-w-2xl">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0092b3]/10 text-[#0092b3] border border-[#0092b3]/20 text-xs font-bold uppercase tracking-wider">
+                <GitFork className="h-3.5 w-3.5" />
+                <span>Independent Channel Partner</span>
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                Network Tree Not Applicable
+              </h2>
+              <p className="text-sm text-slate-600 leading-relaxed font-medium">
+                The <span className="font-bold text-slate-900">Network Tree Hierarchy</span> is designed exclusively for <span className="font-bold text-[#0092b3]">Channel Partner Heads (CP Heads)</span> to manage multi-tiered partner networks and team downlines.
+              </p>
+              <p className="text-xs text-slate-500 leading-relaxed font-normal">
+                As a Channel Partner, your account operates directly with Maytri CRM. Focus on adding prospective buyers, managing client tours, and closing bookings with zero network hierarchy overhead.
+              </p>
+            </div>
+
+            {/* Partner Node Pill */}
+            <div className="shrink-0 bg-white/95 backdrop-blur-xs border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3 min-w-[260px]">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2">
+                Partner Node Info
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-semibold">Account:</span>
+                  <span className="text-slate-900 font-bold">{partnerProfile.name}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-semibold">Partner Code:</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyCode(partnerProfile.code)}
+                    className="font-mono font-bold text-[#0092b3] bg-cyan-50 hover:bg-cyan-100 px-2 py-0.5 rounded flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <span>{partnerProfile.code}</span>
+                    {copiedCode === partnerProfile.code ? (
+                      <Check className="h-3 w-3 text-emerald-600" />
+                    ) : (
+                      <Copy className="h-3 w-3 text-slate-400" />
+                    )}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-semibold">Network Level:</span>
+                  <span className="text-slate-700 font-bold">Direct Partner</span>
+                </div>
+                {partnerProfile.superior_code && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-500 font-semibold">Superior Code:</span>
+                    <span className="font-mono font-bold text-slate-700">{partnerProfile.superior_code}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-semibold">Hierarchy Status:</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Active
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   const filteredNodes = filterTreeNodes(partnerNodes, searchQuery)

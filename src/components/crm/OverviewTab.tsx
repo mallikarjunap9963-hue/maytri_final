@@ -1,33 +1,50 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Building2,
   Users,
   TrendingUp,
-  Plus,
   RefreshCw,
-  MapPin,
   CheckCircle2,
   Info,
+  UserCheck,
+  Layers,
+  ChevronRight,
+  Phone,
+  Mail,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { ApiService, AuthToken } from '@/services/apiService'
-import { MiniLoader } from '@/components/common/MiniLoader'
+import {
+  ApiService,
+  AuthToken,
+  type LeadDashboardData,
+} from '@/services/apiService'
 import { DashboardSkeleton } from '@/components/common/Skeletons'
 import { ProjectDetailsModal } from '@/components/modals/ProjectDetailsModal'
 import type { Project, Lead } from '@/data/appData'
 import { DEFAULT_PROJECTS } from '@/data/appData'
 
+export interface TeamPartnerCard {
+  id: number
+  name: string
+  company: string
+  code: string
+  leadsCount: number
+  mobile?: string
+  email?: string
+  status?: string
+}
+
 interface OverviewTabProps {
-  onNavigateTab?: (tab: any, projectName?: string) => void
+  onNavigateTab?: (tab: any, projectName?: string, partner?: { id?: number; name?: string }) => void
   onOpenAddLead: (projectName?: string) => void
   onOpenScheduleVisit?: () => void
   selectedProject?: string
   refreshKey?: number
 }
 
-// Strict helper to match lead with project
+// Helper to match lead with project
 const isLeadForProject = (l: Lead, p: Project): boolean => {
   if (!l || !p) return false
   const projName = (p.name || '').toLowerCase().trim()
@@ -50,34 +67,142 @@ const isLeadForProject = (l: Lead, p: Project): boolean => {
   return false
 }
 
+// Robust helper to extract phone number from diverse backend structures
+const extractPhone = (item: any): string => {
+  if (!item) return '-'
+  const candidates = [
+    item.mobile,
+    item.phone,
+    item.mobile_number,
+    item.mobile_no,
+    item.phone_number,
+    item.phone_no,
+    item.contact,
+    item.contact_number,
+    item.contact_no,
+    item.cell,
+    item.whatsapp,
+    item.whatsapp_number,
+    item.registered_mobile,
+    // Nested user
+    item.user?.mobile,
+    item.user?.phone,
+    item.user?.mobile_number,
+    item.user?.mobile_no,
+    item.user?.phone_number,
+    item.user?.phone_no,
+    item.user?.contact_number,
+    item.user?.contact_no,
+    item.user?.registered_mobile,
+    // Nested partner
+    item.partner?.mobile,
+    item.partner?.phone,
+    item.partner?.mobile_number,
+    item.partner?.user?.mobile,
+    item.partner?.user?.phone,
+    // Nested profile
+    item.profile?.mobile,
+    item.profile?.phone,
+    item.profile?.user?.mobile,
+    // Nested kyc
+    item.kyc?.mobile,
+    item.kyc?.phone,
+    item.kyc_details?.mobile,
+    item.kyc_details?.phone,
+    item.kyc_data?.mobile,
+    // User login username fallback if 10-digit mobile
+    item.user?.username,
+    item.username,
+  ]
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim() && c.trim() !== '-') {
+      const clean = c.trim()
+      if (clean.includes('@')) continue
+      const digits = clean.replace(/\D/g, '')
+      if (digits.length >= 10) {
+        return clean
+      }
+      if (clean.length >= 7 && !clean.includes('@')) {
+        return clean
+      }
+    } else if (typeof c === 'number' && c > 10000000) {
+      return String(c)
+    }
+  }
+
+  return '-'
+}
+
+// Robust helper to extract email from diverse backend structures
+const extractEmail = (item: any): string => {
+  if (!item) return '-'
+  const candidates = [
+    item.email,
+    item.user?.email,
+    item.user_email,
+    item.partner?.email,
+    item.partner?.user?.email,
+    item.kyc?.email,
+    item.kyc_details?.email,
+    item.user?.username,
+    item.username,
+  ]
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.includes('@')) {
+      return c.trim()
+    }
+  }
+
+  return '-'
+}
+
 export const OverviewTab: React.FC<OverviewTabProps> = ({
   onNavigateTab,
   onOpenAddLead,
-  onOpenScheduleVisit,
   selectedProject,
   refreshKey,
 }) => {
   const [loading, setLoading] = useState<boolean>(true)
+  const [refreshing, setRefreshing] = useState<boolean>(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [leads, setLeads] = useState<Lead[]>([])
+  const [dashboardData, setDashboardData] = useState<LeadDashboardData | null>(null)
   const [teamCount, setTeamCount] = useState<number>(0)
+  const [teamPartners, setTeamPartners] = useState<TeamPartnerCard[]>([])
+  const [isCpHead, setIsCpHead] = useState<boolean>(false)
 
   // Modal States
   const [selectedProjectForModal, setSelectedProjectForModal] = useState<Project | null>(null)
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false)
 
-  const loadData = async () => {
-    setLoading(true)
+  const loadData = async (isManualRefresh = false) => {
+    if (isManualRefresh) {
+      setRefreshing(true)
+    } else {
+      setLoading(true)
+    }
+
     try {
-      const [fetchedProjects, fetchedLeads, profileRes, teamRes, treeRes] = await Promise.all([
-        ApiService.getProjects().catch(() => []),
-        ApiService.getLeads().catch(() => []),
-        ApiService.getPartnerProfile().catch(() => null),
-        ApiService.getMyTeam().catch(() => null),
-        ApiService.getPartnerTree().catch(() => null),
-      ])
-      setProjects(fetchedProjects && fetchedProjects.length > 0 ? fetchedProjects : DEFAULT_PROJECTS)
-      setLeads(fetchedLeads || [])
+      const [fetchedProjects, fetchedLeads, dashRes, profileRes, teamRes, treeRes] =
+        await Promise.all([
+          ApiService.getProjects().catch(() => []),
+          ApiService.getLeads().catch(() => []),
+          ApiService.getLeadsDashboard().catch(() => null),
+          ApiService.getPartnerProfile().catch(() => null),
+          ApiService.getMyTeam().catch(() => null),
+          ApiService.getPartnerTree().catch(() => null),
+        ])
+
+      const activeProjects = fetchedProjects && fetchedProjects.length > 0 ? fetchedProjects : DEFAULT_PROJECTS
+      const activeLeads = fetchedLeads || []
+      setProjects(activeProjects)
+      setLeads(activeLeads)
+
+      if (dashRes?.ok && dashRes.data) {
+        setDashboardData(dashRes.data)
+      }
 
       const profile = profileRes?.ok
         ? profileRes.data?.data || profileRes.data?.profile || profileRes.data
@@ -93,9 +218,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         user?.role ||
         cachedRole ||
         ''
-      const isCpHead =
-        rawType.toUpperCase() === 'CP_HEAD' ||
-        rawType.toUpperCase().includes('HEAD')
+      const cpHeadStatus =
+        rawType.toUpperCase() === 'CP_HEAD' || rawType.toUpperCase().includes('HEAD')
+      setIsCpHead(cpHeadStatus)
 
       const isApprovedAccount = (item: any): boolean => {
         if (!item) return false
@@ -113,10 +238,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         return false
       }
 
-      if (isCpHead) {
-        let count = 0
+      // Extract Team Partners for CP Head (ONLY APPROVED PARTNERS)
+      if (cpHeadStatus) {
+        const partnersMap = new Map<number, TeamPartnerCard>()
+
+        // 1. From teamRes (My Team endpoint)
+        let rawTeamItems: any[] = []
         if (teamRes?.ok && teamRes.data) {
-          const rawItems =
+          const list =
             teamRes.data.items ||
             teamRes.data.data?.items ||
             teamRes.data.team ||
@@ -129,36 +258,255 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             teamRes.data.results ||
             (Array.isArray(teamRes.data?.data) ? teamRes.data.data : null) ||
             (Array.isArray(teamRes.data) ? teamRes.data : [])
-          if (Array.isArray(rawItems)) {
-            count = rawItems.filter((m: any) => isApprovedAccount(m)).length
+          if (Array.isArray(list)) {
+            rawTeamItems = list
           }
         }
-        if (count === 0 && treeRes?.ok && treeRes.data) {
+
+        // 2. From treeRes (Network Tree endpoint)
+        if (treeRes?.ok && treeRes.data) {
           const treeData = treeRes.data.data || treeRes.data.tree || treeRes.data.items || treeRes.data
           const treeList = Array.isArray(treeData) ? treeData : [treeData]
-          let extracted = 0
           treeList.forEach((root: any) => {
             if (root && Array.isArray(root.children)) {
-              extracted += root.children.filter((c: any) => isApprovedAccount(c)).length
+              rawTeamItems = [...rawTeamItems, ...root.children]
             }
           })
-          count = extracted
         }
-        setTeamCount(count)
+
+        // Filter ONLY approved partners from team / tree
+        const approvedTeamItems = rawTeamItems.filter((m: any) => isApprovedAccount(m))
+
+        // Create approved ID set for cross-checking
+        const approvedIdSet = new Set<number>()
+        const approvedNameSet = new Set<string>()
+
+        approvedTeamItems.forEach((m: any) => {
+          const id = Number(m.id || m.partner_id || m.user_id || m.user?.id)
+          if (id > 0) approvedIdSet.add(id)
+          const name = (m.full_name || m.name || `${m.first_name || ''} ${m.last_name || ''}`.trim() || '').toLowerCase()
+          if (name) approvedNameSet.add(name)
+        })
+
+        // 3. Map approved partners from teamRes & treeRes
+        approvedTeamItems.forEach((m: any) => {
+          const id = Number(m.id || m.partner_id || m.user_id || m.user?.id)
+          if (!id || id <= 0) return
+
+          const name =
+            m.full_name ||
+            `${m.first_name || m.user?.first_name || ''} ${m.last_name || m.user?.last_name || ''}`.trim() ||
+            m.name ||
+            m.partner_name ||
+            m.user?.name ||
+            m.company_name ||
+            m.email ||
+            `Partner #${id}`
+
+          const company = m.company_name || m.company || m.agency_name || 'Channel Partner'
+          const code = m.cp_code || m.partner_code || m.code || `CP-${id}`
+
+          // Count leads matching this approved partner
+          const leadsMatching = activeLeads.filter(
+            (l) =>
+              l.partner_id === id ||
+              l.created_by_id === id ||
+              (l.source && l.source.toLowerCase().trim() === name.toLowerCase().trim()) ||
+              (l.source && name && l.source.toLowerCase().includes(name.toLowerCase()))
+          ).length
+
+          partnersMap.set(id, {
+            id,
+            name,
+            company,
+            code,
+            leadsCount: leadsMatching,
+            mobile: extractPhone(m),
+            email: extractEmail(m),
+            status: 'Approved',
+          })
+        })
+
+        // 4. Enrich lead stats from dashboardData.partner_leads.partners (ONLY for approved partners)
+        if (dashRes?.ok && dashRes.data?.partner_leads?.partners) {
+          dashRes.data.partner_leads.partners.forEach((pStat: any) => {
+            const p = pStat.partner
+            if (!p?.id) return
+
+            // If partner is approved OR in approved list
+            const isApproved = isApprovedAccount(p) || approvedIdSet.has(p.id) || (p.first_name && approvedNameSet.has(`${p.first_name || ''} ${p.last_name || ''}`.toLowerCase().trim()))
+
+            if (isApproved) {
+              const existing = partnersMap.get(p.id)
+              const name = existing?.name || `${p.first_name || ''} ${p.last_name || ''}`.trim() || p.email || `Partner #${p.id}`
+              const code = existing?.code || p.cp_code || `CP-${p.id}`
+              const company = existing?.company || p.company_name || 'Channel Partner'
+              const leadsCount = Math.max(existing?.leadsCount || 0, pStat.total || 0)
+
+              partnersMap.set(p.id, {
+                id: p.id,
+                name,
+                company,
+                code,
+                leadsCount,
+                mobile: extractPhone(p) !== '-' ? extractPhone(p) : existing?.mobile,
+                email: extractEmail(p) !== '-' ? extractEmail(p) : existing?.email,
+                status: 'Approved',
+              })
+            }
+          })
+        }
+
+        const partnersList = Array.from(partnersMap.values())
+        setTeamPartners(partnersList)
+        setTeamCount(partnersList.length)
       } else {
-        const isApproved = isApprovedAccount(profile) || profile?.is_approved === true || profile?.is_active !== false
+        const isApproved =
+          isApprovedAccount(profile) || profile?.is_approved === true || profile?.is_active !== false
         setTeamCount(isApproved ? 1 : 0)
+        setTeamPartners([])
       }
     } catch (err) {
-      console.warn('Error loading overview data:', err)
+      console.warn('Error loading overview dashboard data:', err)
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
   }
 
   useEffect(() => {
     loadData()
   }, [refreshKey])
+
+  // Current User Identification
+  const currentUser = AuthToken.getUser()
+  const currentUserName = (
+    localStorage.getItem('maytri_profile_name') ||
+    (currentUser
+      ? `${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim() ||
+        (currentUser as any).name ||
+        currentUser.email
+      : '') ||
+    'POKALA REDDY'
+  ).trim().toLowerCase()
+
+  const currentUserId = currentUser?.id
+
+  // Filter only current user's own direct leads (My Leads)
+  const myDirectLeads = useMemo(() => {
+    const seen = new Set<string>()
+    return leads.filter((lead) => {
+      const cleanPhone = lead.phone ? lead.phone.replace(/[^0-9]/g, '').slice(-10) : ''
+      const key = `${lead.id}-${cleanPhone || lead.name}`
+      if (seen.has(key)) return false
+      seen.add(key)
+
+      // Strict match for current user's own leads
+      const assignee = (lead.assignedTo || '').toLowerCase().trim()
+      const creator = (lead.source || '').toLowerCase().trim()
+
+      const isAssignedToMe =
+        assignee.length > 0 &&
+        (assignee === currentUserName ||
+          currentUserName.includes(assignee) ||
+          assignee.includes(currentUserName))
+
+      const isCreatedByMe =
+        (currentUserId && (lead.created_by_id === currentUserId || lead.partner_id === currentUserId)) ||
+        (creator.length > 0 && (creator === currentUserName || creator.includes(currentUserName)))
+
+      return isAssignedToMe || isCreatedByMe
+    })
+  }, [leads, currentUserName, currentUserId])
+
+  // Backend live stats
+  const projectsCount = projects.length
+  const totalLeadsCount = dashboardData?.my_leads?.total ?? myDirectLeads.length
+  const teamLeadsCount = dashboardData?.partner_leads?.total ?? 0
+  const showTeamLeadsCard = isCpHead || (dashboardData?.partner_leads !== undefined && dashboardData.partner_leads !== null && teamLeadsCount > 0)
+
+  // Status breakdown strictly for the 6 statuses of My Leads
+  const statusStats = useMemo(() => {
+    const backendStatuses = dashboardData?.my_leads?.statuses || {}
+
+    // Helper to calculate exact counts from backend with myDirectLeads array fallback
+    const getCount = (matchKeys: string[]) => {
+      let count = 0
+      let foundInBackend = false
+
+      Object.entries(backendStatuses).forEach(([k, v]) => {
+        const upperK = k.toUpperCase().replace(/[\s_-]/g, '')
+        if (matchKeys.some((m) => upperK === m.toUpperCase().replace(/[\s_-]/g, '') || upperK.includes(m.toUpperCase().replace(/[\s_-]/g, '')))) {
+          count += Number(v) || 0
+          foundInBackend = true
+        }
+      })
+
+      if (foundInBackend) return count
+
+      return myDirectLeads.filter((l) => {
+        const stageUpper = (l.stage || '').toUpperCase().replace(/[\s_-]/g, '')
+        return matchKeys.some((m) => stageUpper === m.toUpperCase().replace(/[\s_-]/g, '') || stageUpper.includes(m.toUpperCase().replace(/[\s_-]/g, '')))
+      }).length
+    }
+
+    return [
+      {
+        key: 'New',
+        label: 'New',
+        count: getCount(['NEW', 'FRESH', 'UNASSIGNED', 'NEWINQUIRY']),
+        borderClass: 'border-sky-200 hover:border-sky-400 bg-sky-50/50 hover:bg-sky-50',
+        badgeClass: 'text-sky-700 bg-sky-100/70',
+        textClass: 'text-sky-950',
+        barClass: 'bg-sky-500',
+      },
+      {
+        key: 'Contacted',
+        label: 'Contacted',
+        count: getCount(['CONTACTED', 'CONTACT', 'CALL', 'REACHED']),
+        borderClass: 'border-indigo-200 hover:border-indigo-400 bg-indigo-50/50 hover:bg-indigo-50',
+        badgeClass: 'text-indigo-700 bg-indigo-100/70',
+        textClass: 'text-indigo-950',
+        barClass: 'bg-indigo-500',
+      },
+      {
+        key: 'Follow Up',
+        label: 'Follow Up',
+        count: getCount(['FOLLOWUP', 'FOLLOW', 'NEGOTIATION', 'INPROGRESS']),
+        borderClass: 'border-purple-200 hover:border-purple-400 bg-purple-50/50 hover:bg-purple-50',
+        badgeClass: 'text-purple-700 bg-purple-100/70',
+        textClass: 'text-purple-950',
+        barClass: 'bg-purple-500',
+      },
+      {
+        key: 'Interested',
+        label: 'Interested',
+        count: getCount(['INTERESTED', 'SITEVISIT', 'VISIT', 'QUALIFIED']),
+        borderClass: 'border-amber-200 hover:border-amber-400 bg-amber-50/50 hover:bg-amber-50',
+        badgeClass: 'text-amber-700 bg-amber-100/70',
+        textClass: 'text-amber-950',
+        barClass: 'bg-amber-500',
+      },
+      {
+        key: 'Converted',
+        label: 'Converted',
+        count: getCount(['CONVERTED', 'BOOKED', 'WON', 'CLOSED']),
+        borderClass: 'border-emerald-300 hover:border-emerald-500 bg-emerald-50/60 hover:bg-emerald-50',
+        badgeClass: 'text-emerald-800 bg-emerald-100',
+        textClass: 'text-emerald-950',
+        barClass: 'bg-emerald-600',
+      },
+      {
+        key: 'Lost',
+        label: 'Lost',
+        count: getCount(['LOST', 'REJECTED', 'DROPPED', 'CANCELLED']),
+        borderClass: 'border-rose-200 hover:border-rose-400 bg-rose-50/40 hover:bg-rose-50',
+        badgeClass: 'text-rose-700 bg-rose-100/70',
+        textClass: 'text-rose-950',
+        barClass: 'bg-rose-500',
+      },
+    ]
+  }, [dashboardData, myDirectLeads])
 
   // Filter projects if a project is selected
   const filteredProjects = selectedProject && selectedProject !== 'ALL'
@@ -170,169 +518,267 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   }
 
   return (
-    <div className="space-y-6 text-slate-900">
-      {/* TOP KPI CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Card className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-shadow">
+    <div className="space-y-6 text-slate-900 animate-in fade-in duration-200">
+      {/* 1. TOP BACKEND KPI CARDS */}
+      <div
+        className={cn(
+          'grid grid-cols-1 gap-4',
+          isCpHead
+            ? showTeamLeadsCard
+              ? 'sm:grid-cols-2 lg:grid-cols-4'
+              : 'sm:grid-cols-2 lg:grid-cols-3'
+            : 'sm:grid-cols-2'
+        )}
+      >
+        {/* 1. Projects */}
+        <Card
+          onClick={() => onNavigateTab && onNavigateTab('projects')}
+          className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer group"
+        >
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Portfolio Projects</p>
-              <h3 className="text-2xl font-black text-slate-900 mt-1">{projects.length}</h3>
-              <p className="text-[11px] font-semibold text-emerald-600 mt-1 flex items-center gap-1">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Projects</p>
+              <h3 className="text-3xl font-black text-slate-900 mt-1">{projectsCount}</h3>
+              <p className="text-[11px] font-semibold text-emerald-600 mt-1.5 flex items-center gap-1 group-hover:underline">
                 <CheckCircle2 className="h-3.5 w-3.5" /> All Active on Portal
               </p>
             </div>
-            <div className="h-12 w-12 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold">
+            <div className="h-12 w-12 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors">
               <Building2 className="h-6 w-6" />
             </div>
           </div>
         </Card>
 
-        <Card className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Leads Sourced</p>
-              <h3 className="text-2xl font-black text-slate-900 mt-1">{leads.length}</h3>
-              <p className="text-[11px] font-semibold text-[#0092b3] mt-1 flex items-center gap-1">
-                <TrendingUp className="h-3.5 w-3.5" /> Real-time Sync
-              </p>
+        {/* 2. Team Size (Only for CP Head) */}
+        {isCpHead && (
+          <Card
+            onClick={() => onNavigateTab && onNavigateTab('team')}
+            className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Team Size</p>
+                <h3 className="text-3xl font-black text-slate-900 mt-1">{teamCount}</h3>
+                <p className="text-[11px] font-semibold text-[#0092b3] mt-1.5 flex items-center gap-1 group-hover:underline">
+                  <Users className="h-3.5 w-3.5" /> View Team Network
+                </p>
+              </div>
+              <div className="h-12 w-12 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors">
+                <Users className="h-6 w-6" />
+              </div>
             </div>
-            <div className="h-12 w-12 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold">
-              <Users className="h-6 w-6" />
-            </div>
-          </div>
-        </Card>
+          </Card>
+        )}
 
+        {/* 3. My Leads */}
         <Card
-          onClick={() => onNavigateTab && onNavigateTab('team')}
+          onClick={() => onNavigateTab && onNavigateTab('myleads')}
           className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer group"
         >
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">My Team</p>
-              <h3 className="text-2xl font-black text-slate-900 mt-1">{teamCount}</h3>
-              <p className="text-[11px] font-semibold text-[#0092b3] mt-1 flex items-center gap-1 group-hover:underline">
-                <Users className="h-3.5 w-3.5" /> View Team Network
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">My Leads</p>
+              <h3 className="text-3xl font-black text-slate-900 mt-1">{totalLeadsCount}</h3>
+              <p className="text-[11px] font-semibold text-[#0092b3] mt-1.5 flex items-center gap-1 group-hover:underline">
+                <TrendingUp className="h-3.5 w-3.5" /> Direct Sourced Leads
               </p>
             </div>
             <div className="h-12 w-12 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors">
-              <Users className="h-6 w-6" />
+              <TrendingUp className="h-6 w-6" />
             </div>
           </div>
         </Card>
+
+        {/* 4. Team Leads (Only for CP Head / accounts with downlines) */}
+        {showTeamLeadsCard && (
+          <Card
+            onClick={() => onNavigateTab && onNavigateTab('leads')}
+            className="border border-slate-200 shadow-xs bg-white rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer group"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Team Leads</p>
+                <h3 className="text-3xl font-black text-slate-900 mt-1">{teamLeadsCount}</h3>
+                <p className="text-[11px] font-semibold text-[#0092b3] mt-1.5 flex items-center gap-1 group-hover:underline">
+                  <UserCheck className="h-3.5 w-3.5" /> Network Contribution
+                </p>
+              </div>
+              <div className="h-12 w-12 rounded-2xl bg-cyan-50 text-[#0092b3] flex items-center justify-center font-bold group-hover:bg-[#0092b3] group-hover:text-white transition-colors">
+                <UserCheck className="h-6 w-6" />
+              </div>
+            </div>
+          </Card>
+        )}
       </div>
 
-      {/* CHANNEL PARTNER PERFORMANCE TABLE (PROJECTS & LEADS) */}
-      <Card className="border border-slate-200 shadow-sm bg-white overflow-hidden rounded-2xl">
-        <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-3 pt-4 px-5 border-b border-slate-100 gap-2">
-          <div>
-            <CardTitle className="text-base font-extrabold text-slate-900 tracking-tight">
-              Channel Partner Performance
-            </CardTitle>
-            <CardDescription className="text-xs font-semibold text-slate-500 mt-0.5">
-              Live projects portfolio, specifications, and assigned lead counts
-            </CardDescription>
-          </div>
+      {/* 2. LIVE BACKEND STATUS STATS (6 STATUSES: New, Contacted, Follow Up, Interested, Converted, Lost) */}
+      <Card className="border border-slate-200 shadow-xs bg-white rounded-2xl overflow-hidden">
+        <CardHeader className="py-3.5 px-5 border-b border-slate-100 bg-slate-50/50 flex flex-row items-center justify-between">
           <div className="flex items-center gap-2">
-            <Button
-              onClick={loadData}
-              variant="outline"
-              size="sm"
-              className="h-8.5 border-slate-200 text-slate-700 hover:text-[#0092b3] hover:bg-slate-50 font-bold text-xs gap-1.5 rounded-xl px-3 cursor-pointer"
-            >
-              <RefreshCw className="h-3.5 w-3.5 text-[#0092b3]" />
-              <span>Refresh</span>
-            </Button>
+            <Layers className="h-4 w-4 text-[#0092b3]" />
+            <CardTitle className="text-sm font-black text-slate-900">
+              Lead Status Breakdown
+            </CardTitle>
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onNavigateTab && onNavigateTab('myleads')}
+            className="text-xs font-bold text-[#0092b3] hover:text-[#007d99] hover:bg-[#0092b3]/10 h-7.5 px-2.5 rounded-lg gap-1 cursor-pointer"
+          >
+            <span>View My Leads</span>
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
         </CardHeader>
 
-        <CardContent className="p-0 overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-[#0092b3] text-white font-semibold text-[11px] tracking-wide">
-                <th className="py-3.5 px-6 font-bold border-r border-cyan-400/30">Project</th>
-                <th className="py-3.5 px-6 text-center font-bold w-52">Leads</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {filteredProjects.length === 0 ? (
-                <tr>
-                  <td colSpan={2} className="py-12 text-center text-slate-400 font-medium text-xs">
-                    No active projects found. Projects registered in backend will appear here automatically.
-                  </td>
-                </tr>
-              ) : (
-                filteredProjects.map((p, idx) => {
-                  // Strictly count leads for this specific project only
-                  const projLeads = leads.filter((l) => isLeadForProject(l, p))
+        <CardContent className="p-4 sm:p-5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {statusStats.map((item) => {
+              const pct = totalLeadsCount > 0 ? Math.round((item.count / totalLeadsCount) * 100) : 0
+              return (
+                <div
+                  key={item.key}
+                  onClick={() => onNavigateTab && onNavigateTab('myleads')}
+                  className={cn(
+                    'p-3.5 rounded-xl border transition-all cursor-pointer space-y-1.5 shadow-2xs hover:shadow-sm',
+                    item.borderClass
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className={cn('text-[11px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider', item.badgeClass)}>
+                      {item.label}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">{pct}%</span>
+                  </div>
 
-                  return (
-                    <tr
-                      key={p.id}
-                      className={cn(
-                        'hover:bg-[#0092b3]/5 transition-colors',
-                        idx % 2 === 1 ? 'bg-slate-50/40' : 'bg-white'
-                      )}
-                    >
-                      <td className="py-4 px-6 border-r border-slate-100">
-                        <div className="flex items-start gap-3.5">
-                          <div className="h-10 w-10 rounded-2xl bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold shrink-0 mt-0.5 shadow-xs">
-                            <Building2 className="h-5 w-5" />
-                          </div>
-                          <div className="space-y-1.5 flex-1">
-                            <div className="flex flex-wrap items-center gap-2.5">
-                              <span className="text-sm font-black text-slate-900">{p.name}</span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedProjectForModal(p)
-                                  setIsDetailsModalOpen(true)
-                                }}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-extrabold text-[#0092b3] hover:text-[#007d99] bg-[#0092b3]/10 hover:bg-[#0092b3]/20 rounded-lg border border-[#0092b3]/20 transition-all cursor-pointer shadow-2xs"
-                              >
-                                <Info className="h-3 w-3 text-[#0092b3]" />
-                                <span>View More</span>
-                              </button>
-                            </div>
-                            {p.description ? (
-                              <p className="text-xs text-slate-500 font-medium line-clamp-2 max-w-2xl leading-relaxed">
-                                {p.description}
-                              </p>
-                            ) : (
-                              <p className="text-xs text-slate-400 font-normal italic">
-                                {p.location ? `Located at ${p.location}` : 'No description provided.'}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-4 px-6 text-center font-black text-slate-900">
-                        <div className="flex items-center justify-center gap-2">
-                          <span className="inline-flex items-center justify-center min-w-[2.25rem] px-3 py-1 rounded-full bg-[#0092b3]/10 text-[#0092b3] font-black text-sm">
-                            {projLeads.length}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (onNavigateTab) {
-                                onNavigateTab('leads', p.name)
-                              }
-                            }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-extrabold text-[#0092b3] hover:text-white bg-[#0092b3]/10 hover:bg-[#0092b3] rounded-lg border border-[#0092b3]/20 transition-all cursor-pointer shadow-2xs"
-                          >
-                            <Users className="h-3 w-3" />
-                            <span>View Leads</span>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
+                  <p className={cn('text-2xl font-black', item.textClass)}>
+                    {item.count}
+                  </p>
+
+                  <div className="w-full bg-slate-200/70 h-1.5 rounded-full overflow-hidden">
+                    <div
+                      className={cn('h-full rounded-full transition-all duration-500', item.barClass)}
+                      style={{ width: `${Math.min(pct, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </CardContent>
       </Card>
+
+      {/* 3. TEAM CHANNEL PARTNER CARDS (ONLY FOR CHANNEL HEAD) */}
+      {isCpHead && (
+        <Card className="border border-slate-200 shadow-sm bg-white overflow-hidden rounded-2xl animate-in fade-in duration-300">
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-3 pt-4 px-5 border-b border-slate-100 gap-2">
+            <div>
+              <CardTitle className="text-base font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                <UserCheck className="h-5 w-5 text-[#0092b3]" />
+                <span>Team Channel Partners</span>
+              </CardTitle>
+              <CardDescription className="text-xs font-semibold text-slate-500 mt-0.5">
+                Channel partners in your downline network. Click any card to view their sourced leads.
+              </CardDescription>
+            </div>
+            <span className="text-xs font-black text-[#0092b3] bg-[#0092b3]/10 px-3 py-1.5 rounded-xl border border-[#0092b3]/20 self-start sm:self-auto">
+              {teamPartners.length} {teamPartners.length === 1 ? 'Partner' : 'Partners'} in Network
+            </span>
+          </CardHeader>
+
+          <CardContent className="p-4 sm:p-5">
+            {teamPartners.length === 0 ? (
+              <div className="py-10 text-center text-slate-400 font-medium text-xs">
+                No team partners registered under your code yet.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {teamPartners.map((partner) => {
+                  const initials =
+                    partner.name
+                      .split(' ')
+                      .map((n) => n[0])
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .join('')
+                      .toUpperCase() || 'CP'
+                  const hasPhone = partner.mobile && partner.mobile !== '-'
+                  const hasEmail = partner.email && partner.email !== '-'
+
+                  return (
+                    <div
+                      key={partner.id}
+                      onClick={() => {
+                        if (onNavigateTab) {
+                          onNavigateTab('leads', undefined, { id: partner.id, name: partner.name })
+                        }
+                      }}
+                      className="p-4.5 rounded-2xl border border-slate-200/90 bg-white hover:border-[#0092b3] hover:shadow-md transition-all cursor-pointer group flex flex-col justify-between space-y-4 hover:-translate-y-0.5"
+                    >
+                      {/* Top row: Avatar + Name + Status */}
+                      <div className="flex items-start gap-3">
+                        <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[#0092b3] to-cyan-600 text-white font-black text-sm flex items-center justify-center shadow-xs shrink-0 group-hover:scale-105 transition-transform">
+                          {initials}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <h4 className="text-sm font-black text-slate-900 truncate group-hover:text-[#0092b3] transition-colors">
+                              {partner.name}
+                            </h4>
+                            <span className="text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                              Active
+                            </span>
+                          </div>
+                          <p className="text-xs font-semibold text-slate-500 truncate mt-0.5">
+                            {partner.company}
+                          </p>
+                          <span className="inline-block text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md mt-1 font-mono">
+                            {partner.code}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Middle row: Contact details (Phone / Email) */}
+                      {(hasPhone || hasEmail) && (
+                        <div className="space-y-1 text-xs border-t border-slate-100 pt-2.5">
+                          {hasPhone && (
+                            <div className="flex items-center gap-1.5 text-[11px] text-slate-700">
+                              <Phone className="h-3 w-3 text-[#0092b3] shrink-0" />
+                              <span className="font-semibold">{partner.mobile}</span>
+                            </div>
+                          )}
+                          {hasEmail && (
+                            <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                              <Mail className="h-3 w-3 text-[#0092b3] shrink-0" />
+                              <span className="truncate">{partner.email}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Bottom row: Leads Count Badge + View Leads Action */}
+                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-700">
+                          <TrendingUp className="h-3.5 w-3.5 text-[#0092b3]" />
+                          <span>
+                            <strong className="text-sm font-black text-[#0092b3]">{partner.leadsCount}</strong> {partner.leadsCount === 1 ? 'Lead' : 'Leads'}
+                          </span>
+                        </div>
+
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-[#0092b3] group-hover:translate-x-0.5 transition-transform">
+                          <span>View Leads</span>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* PROJECT DETAILS SPECIFICATIONS MODAL */}
       <ProjectDetailsModal
