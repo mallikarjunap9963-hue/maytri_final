@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import {
   Activity,
-  Download,
   Filter,
   Mail,
   Phone,
@@ -13,11 +12,12 @@ import {
   Plus,
   MessageSquarePlus,
   RefreshCw,
-  CheckCircle2,
+  UserCheck,
+  Building2,
+  Calendar,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import {
   Dialog,
   DialogContent,
@@ -27,99 +27,118 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { ApiService } from '@/services/apiService'
+import type { BackendLeadActivity } from '@/services/apiService'
+import type { Lead } from '@/data/appData'
 import { TableDataSkeleton } from '@/components/common/Skeletons'
-
-export interface LeadActivity {
-  id: string
-  name: string
-  email: string
-  phone: string
-  sellDoLeadId: string
-  project: string
-  channelPartner: string
-  leadStage: 'New Inquiry' | 'Site Visit Scheduled' | 'Token / Negotiation' | 'Loan Processing' | 'Booked' | 'Lost' | string
-  leadStatus: 'Active' | 'Under Review' | 'Converted' | 'Expired'
-  registeredAt: string
-  validityPeriod: string
-}
+import { toast } from '@/components/common/ToastNotification'
 
 export const LeadActivitiesTab: React.FC = () => {
-  const [activities, setActivities] = useState<LeadActivity[]>([])
-  const [loading, setLoading] = useState<boolean>(true)
+  const [leads, setLeads] = useState<Lead[]>([])
+  const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null)
+  const [activities, setActivities] = useState<BackendLeadActivity[]>([])
+  const [loadingLeads, setLoadingLeads] = useState<boolean>(true)
+  const [loadingActivities, setLoadingActivities] = useState<boolean>(false)
+
+  // Add Note Modal
   const [isAddNoteOpen, setIsAddNoteOpen] = useState(false)
-  const [selectedLeadId, setSelectedLeadId] = useState<number>(1)
+  const [modalLeadId, setModalLeadId] = useState<number | null>(null)
   const [activityType, setActivityType] = useState('Call Note')
   const [noteDesc, setNoteDesc] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  // Load leads from backend
+  // 1. Fetch live leads list from backend
   useEffect(() => {
-    async function loadBackendLeads() {
-      setLoading(true)
+    async function loadLeads() {
+      setLoadingLeads(true)
       try {
-        const res = await ApiService.getLeads()
-        if (res && res.length > 0) {
-          const mapped: LeadActivity[] = res.map((l) => ({
-            id: `act-api-${l.id}`,
-            name: l.name,
-            email: l.email || '-',
-            phone: l.phone || '-',
-            sellDoLeadId: String(l.rawId ? `LD-${l.rawId}` : l.id),
-            project: l.project || '-',
-            channelPartner: l.assignedTo || l.source || 'Channel Partner',
-            leadStage: l.stage,
-            leadStatus: l.stage === 'Booked' ? 'Converted' : l.stage === 'Lost' ? 'Expired' : 'Active',
-            registeredAt: l.createdDate || '-',
-            validityPeriod: l.lastActivity || '-',
-          }))
-          setActivities(mapped)
-        } else {
-          setActivities([])
+        const fetchedLeads = await ApiService.getLeads()
+        setLeads(fetchedLeads || [])
+        if (fetchedLeads && fetchedLeads.length > 0) {
+          const firstLeadNumeric = fetchedLeads[0].rawId
+            ? Number(fetchedLeads[0].rawId)
+            : Number(fetchedLeads[0].id.replace(/\D/g, ''))
+          if (firstLeadNumeric && !isNaN(firstLeadNumeric)) {
+            setSelectedLeadId(firstLeadNumeric)
+            setModalLeadId(firstLeadNumeric)
+          }
         }
-      } catch (err) {
-        console.warn('Leads query:', err)
+      } catch (err: any) {
+        console.warn('Failed to load leads for activities:', err)
+        toast.error('Failed to Load Leads', err.message || 'Could not load leads.')
       } finally {
-        setLoading(false)
+        setLoadingLeads(false)
       }
     }
-    loadBackendLeads()
+    loadLeads()
   }, [])
 
-  const handleDeleteActivity = (id: string, name: string) => {
-    if (confirm(`Are you sure you want to delete lead activity for "${name}"?`)) {
-      setActivities((prev) => prev.filter((a) => a.id !== id))
+  // 2. Fetch real activities for the selected lead from backend
+  const fetchActivities = async (leadNumericId: number) => {
+    setLoadingActivities(true)
+    try {
+      const res = await ApiService.getLeadActivities(leadNumericId)
+      if (res.ok && res.data?.items) {
+        setActivities(res.data.items)
+      } else {
+        setActivities([])
+      }
+    } catch (err: any) {
+      console.warn('Failed to load lead activities from backend:', err)
+      setActivities([])
+    } finally {
+      setLoadingActivities(false)
     }
   }
 
-  const handleEditActivity = (activity: LeadActivity) => {
-    const newName = prompt('Edit Lead Name:', activity.name)
-    if (newName && newName.trim() !== '') {
-      setActivities((prev) =>
-        prev.map((a) => (a.id === activity.id ? { ...a, name: newName.trim() } : a))
-      )
+  useEffect(() => {
+    if (selectedLeadId) {
+      fetchActivities(selectedLeadId)
     }
-  }
+  }, [selectedLeadId])
 
+  // Handle Add Note Submit (POST /api/leads/{id}/activities/)
   const handleAddNoteSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!noteDesc) return
+    const targetLeadId = modalLeadId || selectedLeadId
+    if (!targetLeadId || !noteDesc.trim() || isSubmitting) return
+
     setIsSubmitting(true)
     try {
-      await ApiService.addLeadNote(selectedLeadId, {
+      const res = await ApiService.addLeadNote(targetLeadId, {
         activity_type: activityType,
-        description: noteDesc,
+        description: noteDesc.trim(),
       })
-      alert(`Activity "${activityType}" posted to live backend API!`)
+
+      if (!res.ok) {
+        throw new Error(res.message || 'Could not save activity note to server database')
+      }
+
+      toast.success('Activity Logged', 'Activity note recorded to live database.')
       setIsAddNoteOpen(false)
       setNoteDesc('')
-    } catch {
-      setIsAddNoteOpen(false)
+      if (selectedLeadId === targetLeadId) {
+        await fetchActivities(targetLeadId)
+      } else {
+        setSelectedLeadId(targetLeadId)
+      }
+    } catch (err: any) {
+      console.warn('Failed to add activity note:', err)
+      toast.error('Add Note Failed', err.message || 'Could not save activity note.')
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  if (loading) {
+  const handleUnsupportedAction = (action: string) => {
+    toast.info('Feature Not Supported by Backend', `${action} of lead activities is not provided in backend Swagger API.`)
+  }
+
+  const selectedLead = leads.find((l) => {
+    const num = l.rawId ? Number(l.rawId) : Number(l.id.replace(/\D/g, ''))
+    return num === selectedLeadId
+  })
+
+  if (loadingLeads) {
     return <TableDataSkeleton rows={6} columns={6} />
   }
 
@@ -136,152 +155,181 @@ export const LeadActivitiesTab: React.FC = () => {
 
         {/* Toolbar Buttons */}
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Lead Selector Filter */}
+          <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs shadow-2xs">
+            <span className="text-slate-500 font-bold">Select Lead:</span>
+            <select
+              value={selectedLeadId || ''}
+              onChange={(e) => {
+                const id = Number(e.target.value)
+                setSelectedLeadId(id)
+                setModalLeadId(id)
+              }}
+              className="bg-transparent font-extrabold text-slate-800 focus:outline-hidden cursor-pointer"
+            >
+              {leads.map((l) => {
+                const numId = l.rawId ? Number(l.rawId) : Number(l.id.replace(/\D/g, ''))
+                return (
+                  <option key={l.id} value={numId}>
+                    {l.name} ({l.project || 'Lead'})
+                  </option>
+                )
+              })}
+            </select>
+          </div>
+
           {/* Total Count Badge */}
           <div className="border border-[#0092b3]/40 bg-[#0092b3]/10 text-[#0092b3] font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1">
-            <span>Total :</span>
+            <span>Activities :</span>
             <span className="font-extrabold">{activities.length}</span>
           </div>
 
           {/* Add Activity Note Button */}
           <Button
             size="sm"
-            className="bg-[#0092b3] hover:bg-[#007d99] text-white font-bold text-xs h-8.5 px-3 rounded-lg gap-1.5 shadow-sm cursor-pointer"
-            onClick={() => setIsAddNoteOpen(true)}
+            className="bg-[#0092b3] hover:bg-[#007d99] text-white font-bold text-xs h-8.5 px-3 rounded-lg gap-1.5 shadow-xs cursor-pointer"
+            onClick={() => {
+              setModalLeadId(selectedLeadId)
+              setIsAddNoteOpen(true)
+            }}
           >
             <MessageSquarePlus className="h-4 w-4" />
             <span>Log Activity Note</span>
           </Button>
-
-          {/* Exports Dropdown */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="border border-[#0092b3]/50 text-[#0092b3] hover:bg-[#0092b3]/10 font-bold text-xs h-8.5 px-3 rounded-lg gap-1.5 cursor-pointer"
-            onClick={() => alert('Exporting Lead Activities CSV/Excel report...')}
-          >
-            <span>Exports</span>
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
-
-          {/* Filter Button */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="border border-[#0092b3]/50 text-[#0092b3] hover:bg-[#0092b3]/10 h-8.5 w-8.5 p-0 rounded-lg flex items-center justify-center cursor-pointer"
-          >
-            <Filter className="h-3.5 w-3.5" />
-          </Button>
         </div>
       </div>
 
-      {/* Lead Activities Table Card */}
-      <Card className="border border-slate-200 shadow-sm bg-white overflow-hidden rounded-xl">
+      {/* Selected Lead Overview Bar */}
+      {selectedLead && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 px-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-full bg-[#0092b3]/10 text-[#0092b3] flex items-center justify-center font-bold">
+              <UserCheck className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="font-extrabold text-slate-900">{selectedLead.name}</div>
+              <div className="text-slate-500 text-[11px] font-normal flex items-center gap-2">
+                <span>{selectedLead.phone}</span>
+                {selectedLead.email && <span>• {selectedLead.email}</span>}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 text-slate-700">
+            {selectedLead.project && (
+              <span className="inline-flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-slate-200 font-bold text-[11px]">
+                <Building2 className="h-3 w-3 text-[#0092b3]" />
+                {selectedLead.project}
+              </span>
+            )}
+            <span className="inline-flex items-center px-2.5 py-1 rounded-lg font-bold text-[11px] bg-cyan-50 text-[#0092b3] border border-cyan-200">
+              Stage: {selectedLead.stage}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Real Lead Activities Table Card */}
+      <Card className="border border-slate-200 shadow-xs bg-white overflow-hidden rounded-xl">
         <CardContent className="p-0 overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse min-w-[1100px]">
+          <table className="w-full text-left text-xs border-collapse min-w-[900px]">
             <thead>
               <tr className="bg-[#0092b3] text-white font-medium text-xs tracking-wide">
-                <th className="py-3 px-5 min-w-[240px] font-medium">Name/Email/Phone</th>
-                <th className="py-3 px-3 text-center font-medium">Sell Do Lead ID</th>
-                <th className="py-3 px-3 text-center font-medium">Project</th>
-                <th className="py-3 px-4 text-center font-medium">Channel Partner</th>
-                <th className="py-3 px-3 text-center font-medium">Lead Stage</th>
-                <th className="py-3 px-3 text-center font-medium">Lead Status</th>
-                <th className="py-3 px-3 text-center font-medium">Registered At</th>
-                <th className="py-3 px-3 text-center font-medium">Lead validity period</th>
-                <th className="py-3 px-3 text-center font-medium">Actions</th>
+                <th className="py-3 px-5 min-w-[80px]">Activity ID</th>
+                <th className="py-3 px-4 min-w-[160px]">Activity Type</th>
+                <th className="py-3 px-6 min-w-[280px]">Description / Notes</th>
+                <th className="py-3 px-4 text-center min-w-[140px]">Status Transition</th>
+                <th className="py-3 px-4 text-center min-w-[140px]">Logged By</th>
+                <th className="py-3 px-4 text-center min-w-[160px]">Timestamp</th>
+                <th className="py-3 px-3 text-center min-w-[90px]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-normal text-slate-700">
-              {activities.length === 0 ? (
+              {loadingActivities ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-400 font-medium text-xs">
-                    No lead activities recorded. Click "Log Activity Note" above to log a new activity.
+                  <td colSpan={7} className="py-12 text-center text-slate-400 text-xs">
+                    <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-[#0092b3]" />
+                    Loading backend activity timeline...
+                  </td>
+                </tr>
+              ) : activities.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-slate-400 font-medium text-xs">
+                    No activity notes recorded yet for this lead in the database. Click "Log Activity Note" above to record one.
                   </td>
                 </tr>
               ) : (
                 activities.map((act, idx) => (
-                <tr
-                  key={act.id}
-                  className={`hover:bg-slate-50/80 transition-colors ${
-                    idx % 2 === 1 ? 'bg-slate-50/30' : 'bg-white'
-                  }`}
-                >
-                  {/* Name/Email/Phone */}
-                  <td className="py-3.5 px-5 space-y-0.5">
-                    <h4 className="font-semibold text-xs text-[#0092b3] hover:underline cursor-pointer">
-                      {act.name}
-                    </h4>
-                    <div className="flex items-center gap-1.5 text-[11px] text-slate-600 font-normal">
-                      <Mail className="h-3 w-3 text-slate-400 shrink-0" />
-                      <span>{act.email}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-[11px] text-slate-600 font-normal">
-                      <Phone className="h-3 w-3 text-slate-400 shrink-0" />
-                      <span>{act.phone}</span>
-                    </div>
-                  </td>
+                  <tr
+                    key={act.id || idx}
+                    className={`hover:bg-slate-50/80 transition-colors ${
+                      idx % 2 === 1 ? 'bg-slate-50/30' : 'bg-white'
+                    }`}
+                  >
+                    {/* Activity ID */}
+                    <td className="py-3.5 px-5 font-mono font-bold text-slate-600">
+                      #{act.id}
+                    </td>
 
-                  {/* Sell Do Lead ID */}
-                  <td className="py-3.5 px-3 text-center font-normal text-slate-700 font-mono">
-                    {act.sellDoLeadId}
-                  </td>
+                    {/* Activity Type */}
+                    <td className="py-3.5 px-4">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#0092b3]/15 text-[#0092b3]">
+                        {act.activity_type || 'Note'}
+                      </span>
+                    </td>
 
-                  {/* Project */}
-                  <td className="py-3.5 px-3 text-center font-normal text-slate-900">
-                    {act.project}
-                  </td>
+                    {/* Description */}
+                    <td className="py-3.5 px-6 font-medium text-slate-800">
+                      {act.description}
+                    </td>
 
-                  {/* Channel Partner */}
-                  <td className="py-3.5 px-4 text-center font-normal text-slate-800">
-                    {act.channelPartner}
-                  </td>
+                    {/* Status Transition */}
+                    <td className="py-3.5 px-4 text-center">
+                      {act.old_status || act.new_status ? (
+                        <div className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600">
+                          <span className="text-slate-500">{act.old_status || 'Start'}</span>
+                          <span>→</span>
+                          <span className="text-[#0092b3]">{act.new_status}</span>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 text-[11px]">-</span>
+                      )}
+                    </td>
 
-                  {/* Lead Stage */}
-                  <td className="py-3.5 px-3 text-center">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-[#0092b3]/15 text-[#0092b3]">
-                      {act.leadStage}
-                    </span>
-                  </td>
+                    {/* Logged By */}
+                    <td className="py-3.5 px-4 text-center text-slate-600 text-[11px]">
+                      {act.performed_by
+                        ? `${act.performed_by.first_name || ''} ${act.performed_by.last_name || ''}`.trim() || act.performed_by.email
+                        : 'System'}
+                    </td>
 
-                  {/* Lead Status */}
-                  <td className="py-3.5 px-3 text-center">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-100 text-emerald-800">
-                      {act.leadStatus}
-                    </span>
-                  </td>
+                    {/* Timestamp */}
+                    <td className="py-3.5 px-4 text-center text-slate-500 text-[11px]">
+                      {act.created_at ? new Date(act.created_at).toLocaleString() : '-'}
+                    </td>
 
-                  {/* Registered At */}
-                  <td className="py-3.5 px-3 text-center text-slate-600 font-normal">
-                    {act.registeredAt}
-                  </td>
+                    {/* Actions */}
+                    <td className="py-3.5 px-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          title="Edit Activity (Not available in backend API)"
+                          className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                          onClick={() => handleUnsupportedAction('Editing')}
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                        </button>
 
-                  {/* Lead validity period */}
-                  <td className="py-3.5 px-3 text-center font-bold text-amber-700">
-                    {act.validityPeriod}
-                  </td>
-
-                  {/* Actions */}
-                  <td className="py-4 px-3 text-center">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <button
-                        title="Edit Lead Activity"
-                        className="p-1.5 text-slate-600 hover:text-[#0092b3] hover:bg-[#0092b3]/10 rounded-lg transition-colors cursor-pointer"
-                        onClick={() => handleEditActivity(act)}
-                      >
-                        <Edit3 className="h-4 w-4" />
-                      </button>
-
-                      <button
-                        title="Delete Lead Activity"
-                        className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                        onClick={() => handleDeleteActivity(act.id, act.name)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )))}
+                        <button
+                          title="Delete Activity (Not available in backend API)"
+                          className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                          onClick={() => handleUnsupportedAction('Deletion')}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </CardContent>
@@ -300,7 +348,7 @@ export const LeadActivitiesTab: React.FC = () => {
                   Log Lead Activity Note
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-500">
-                  Saves note directly to backend lead timeline
+                  Saves note directly to backend lead timeline via POST /api/leads/{'{id}'}/activities/
                 </DialogDescription>
               </div>
             </div>
@@ -308,37 +356,43 @@ export const LeadActivitiesTab: React.FC = () => {
 
           <form onSubmit={handleAddNoteSubmit} className="space-y-3 text-xs text-slate-800 pt-1">
             <div>
-              <label className="font-bold text-slate-700 block mb-1">Select Customer Lead</label>
+              <label className="font-bold text-slate-700 block mb-1">Customer Lead *</label>
               <select
-                value={selectedLeadId}
-                onChange={(e) => setSelectedLeadId(Number(e.target.value))}
+                value={modalLeadId || ''}
+                onChange={(e) => setModalLeadId(Number(e.target.value))}
                 className="w-full h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold"
+                required
               >
-                {activities.map((a, idx) => (
-                  <option key={a.id} value={idx + 1}>
-                    {a.name} ({a.project})
-                  </option>
-                ))}
+                {leads.map((l) => {
+                  const numId = l.rawId ? Number(l.rawId) : Number(l.id.replace(/\D/g, ''))
+                  return (
+                    <option key={l.id} value={numId}>
+                      {l.name} — {l.project || 'Maytri Project'}
+                    </option>
+                  )
+                })}
               </select>
             </div>
 
             <div>
-              <label className="font-bold text-slate-700 block mb-1">Activity Type</label>
+              <label className="font-bold text-slate-700 block mb-1">Activity Type *</label>
               <select
                 value={activityType}
                 onChange={(e) => setActivityType(e.target.value)}
                 className="w-full h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold"
+                required
               >
-                <option value="Phone Call Log">Phone Call Log</option>
-                <option value="WhatsApp Conversation">WhatsApp Conversation</option>
-                <option value="Site Visit Follow-up">Site Visit Follow-up</option>
-                <option value="Price Quotation Shared">Price Quotation Shared</option>
-                <option value="Loan Eligibility Check">Loan Eligibility Check</option>
+                <option value="Call Note">Call Note</option>
+                <option value="Site Visit Note">Site Visit Note</option>
+                <option value="Follow-up Note">Follow-up Note</option>
+                <option value="Negotiation Note">Negotiation Note</option>
+                <option value="WhatsApp Note">WhatsApp Note</option>
+                <option value="General Note">General Note</option>
               </select>
             </div>
 
             <div>
-              <label className="font-bold text-slate-700 block mb-1">Activity Description / Summary *</label>
+              <label className="font-bold text-slate-700 block mb-1">Description / Notes *</label>
               <textarea
                 rows={3}
                 placeholder="Spoke with customer regarding floor plan options and booked site visit for Sunday..."
@@ -365,7 +419,7 @@ export const LeadActivitiesTab: React.FC = () => {
               >
                 {isSubmitting ? (
                   <>
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Posting...
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Saving...
                   </>
                 ) : (
                   'Save Activity'
