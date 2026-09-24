@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+.git
+.github
+.vscode
+.idea
+*.log
+npm-debug.log*
+.env.local
+.env.*.local
+vercel.json
+README.md

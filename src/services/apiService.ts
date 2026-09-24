@@ -7,21 +7,25 @@ import type {
 } from '@/data/appData'
 import { DEFAULT_PROJECTS } from '@/data/appData'
 
-export const DIRECT_BACKEND_URL = 'https://maytri-channel-partner-backend.onrender.com'
-const RAW_ENV_URL = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim()
+export const DIRECT_BACKEND_URL = 'https://api.channel-partner.maytrigroup.in'
+const RAW_ENV_URL = ( import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '' ).trim()
 
-export const API_BASE_URL = RAW_ENV_URL || DIRECT_BACKEND_URL
-export const BACKEND_MEDIA_HOST = RAW_ENV_URL || DIRECT_BACKEND_URL
+function normalizeBaseUrl( url: string ): string {
+  return url.replace( /\/api\/?$/, '' ).replace( /\/+$/, '' )
+}
+
+export const API_BASE_URL = normalizeBaseUrl( RAW_ENV_URL || DIRECT_BACKEND_URL )
+export const BACKEND_MEDIA_HOST = API_BASE_URL
 
 // Helper to build absolute media URLs for backend relative file paths (e.g. /media/...)
-export function getFullMediaUrl(path: string | null | undefined): string {
-  if (!path) return ''
-  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('blob:')) return path
-  const base = (BACKEND_MEDIA_HOST || 'https://maytri-channel-partner-backend.onrender.com')
-    .replace(/\/api\/?$/, '')
-    .replace(/\/+$/, '')
-  const cleanPath = path.startsWith('/') ? path : `/${path}`
-  return `${base}${cleanPath}`
+export function getFullMediaUrl( path: string | null | undefined ): string {
+  if ( !path ) return ''
+  if ( path.startsWith( 'http://' ) || path.startsWith( 'https://' ) || path.startsWith( 'blob:' ) ) return path
+  const base = ( BACKEND_MEDIA_HOST || 'https://api.channel-partner.maytrigroup.in' )
+    .replace( /\/api\/?$/, '' )
+    .replace( /\/+$/, '' )
+  const cleanPath = path.startsWith( '/' ) ? path : `/${ path }`
+  return `${ base }${ cleanPath }`
 }
 
 export interface BackendUser {
@@ -155,59 +159,59 @@ export interface LeadDashboardParams {
 
 // Token storage helpers
 export const AuthToken = {
-  getAccess: () => localStorage.getItem('maytri_access_token') || '',
-  setAccess: (token: string) => localStorage.setItem('maytri_access_token', token),
-  getRefresh: () => localStorage.getItem('maytri_refresh_token') || '',
-  setRefresh: (token: string) => localStorage.setItem('maytri_refresh_token', token),
+  getAccess: () => localStorage.getItem( 'maytri_access_token' ) || '',
+  setAccess: ( token: string ) => localStorage.setItem( 'maytri_access_token', token ),
+  getRefresh: () => localStorage.getItem( 'maytri_refresh_token' ) || '',
+  setRefresh: ( token: string ) => localStorage.setItem( 'maytri_refresh_token', token ),
   clear: () => {
-    localStorage.removeItem('maytri_access_token')
-    localStorage.removeItem('maytri_refresh_token')
-    localStorage.removeItem('maytri_user')
-    localStorage.removeItem('maytri_profile_name')
-    localStorage.removeItem('maytri_profile_code')
-    localStorage.removeItem('maytri_profile_designation')
-    localStorage.removeItem('maytri_last_user_name')
+    localStorage.removeItem( 'maytri_access_token' )
+    localStorage.removeItem( 'maytri_refresh_token' )
+    localStorage.removeItem( 'maytri_user' )
+    localStorage.removeItem( 'maytri_profile_name' )
+    localStorage.removeItem( 'maytri_profile_code' )
+    localStorage.removeItem( 'maytri_profile_designation' )
+    localStorage.removeItem( 'maytri_last_user_name' )
   },
   getUser: (): BackendUser | null => {
-    const raw = localStorage.getItem('maytri_user')
-    if (!raw) return null
+    const raw = localStorage.getItem( 'maytri_user' )
+    if ( !raw ) return null
     try {
-      return JSON.parse(raw)
+      return JSON.parse( raw )
     } catch {
       return null
     }
   },
-  setUser: (user: BackendUser) => localStorage.setItem('maytri_user', JSON.stringify(user)),
+  setUser: ( user: BackendUser ) => localStorage.setItem( 'maytri_user', JSON.stringify( user ) ),
 }
 
 // Helper to extract detailed error messages from backend response
-function parseApiErrorMessage(data: any, status: number): string {
-  if (!data) {
-    if (status === 400) return 'Bad Request: Please verify submitted information.'
-    if (status === 401) return 'Unauthorized: Please log in again.'
-    if (status === 403) return 'Forbidden: You do not have permission.'
-    if (status === 404) return 'Resource not found on server.'
-    if (status === 500) return 'Internal Server Error: Backend service error.'
-    return `Request failed with HTTP status ${status}`
+function parseApiErrorMessage( data: any, status: number ): string {
+  if ( !data ) {
+    if ( status === 400 ) return 'Bad Request: Please verify submitted information.'
+    if ( status === 401 ) return 'Unauthorized: Please log in again.'
+    if ( status === 403 ) return 'Forbidden: You do not have permission.'
+    if ( status === 404 ) return 'Resource not found on server.'
+    if ( status === 500 ) return 'Internal Server Error: Backend service error.'
+    return `Request failed with HTTP status ${ status }`
   }
-  if (typeof data === 'string') return data
-  if (data.message && typeof data.message === 'string') return data.message
-  if (data.detail) {
-    if (typeof data.detail === 'string') return data.detail
-    if (Array.isArray(data.detail)) {
-      return data.detail.map((d: any) => d.msg || JSON.stringify(d)).join(', ')
+  if ( typeof data === 'string' ) return data
+  if ( data.message && typeof data.message === 'string' ) return data.message
+  if ( data.detail ) {
+    if ( typeof data.detail === 'string' ) return data.detail
+    if ( Array.isArray( data.detail ) ) {
+      return data.detail.map( ( d: any ) => d.msg || JSON.stringify( d ) ).join( ', ' )
     }
   }
-  if (data.error && typeof data.error === 'string') return data.error
-  if (data.errors) {
-    if (typeof data.errors === 'string') return data.errors
-    if (Array.isArray(data.errors)) return data.errors.join(', ')
-    if (typeof data.errors === 'object') {
-      const msgs = Object.entries(data.errors).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
-      return msgs.join('; ')
+  if ( data.error && typeof data.error === 'string' ) return data.error
+  if ( data.errors ) {
+    if ( typeof data.errors === 'string' ) return data.errors
+    if ( Array.isArray( data.errors ) ) return data.errors.join( ', ' )
+    if ( typeof data.errors === 'object' ) {
+      const msgs = Object.entries( data.errors ).map( ( [ k, v ] ) => `${ k }: ${ Array.isArray( v ) ? v.join( ', ' ) : v }` )
+      return msgs.join( '; ' )
     }
   }
-  return `Server returned error (${status})`
+  return `Server returned error (${ status })`
 }
 
 // Reusable HTTP fetcher with Bearer Authorization and Auto Refresh
@@ -215,29 +219,29 @@ async function apiFetch<T = any>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<{ ok: boolean; data?: T; status: number; message?: string; errors?: any }> {
-  const base = (API_BASE_URL || DIRECT_BACKEND_URL).replace(/\/+$/, '')
-  let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
-  if (!cleanEndpoint.startsWith('/api/') && cleanEndpoint !== '/api') {
-    cleanEndpoint = `/api${cleanEndpoint}`
+  const base = ( API_BASE_URL || DIRECT_BACKEND_URL ).replace( /\/+$/, '' )
+  let cleanEndpoint = endpoint.startsWith( '/' ) ? endpoint : `/${ endpoint }`
+  if ( !cleanEndpoint.startsWith( '/api/' ) && cleanEndpoint !== '/api' ) {
+    cleanEndpoint = `/api${ cleanEndpoint }`
   }
 
-  const targetUrl = `${base}${cleanEndpoint}`
+  const targetUrl = `${ base }${ cleanEndpoint }`
   const token = AuthToken.getAccess()
 
   const headers: Record<string, string> = {
-    ...(options.headers as Record<string, string>),
+    ...( options.headers as Record<string, string> ),
   }
 
-  if (token && !headers['Authorization']) {
-    headers['Authorization'] = `Bearer ${token}`
+  if ( token && !headers[ 'Authorization' ] ) {
+    headers[ 'Authorization' ] = `Bearer ${ token }`
   }
 
-  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
-    headers['Content-Type'] = 'application/json'
+  if ( !( options.body instanceof FormData ) && !headers[ 'Content-Type' ] ) {
+    headers[ 'Content-Type' ] = 'application/json'
   }
 
   try {
-    const res = await fetch(targetUrl, { ...options, headers })
+    const res = await fetch( targetUrl, { ...options, headers } )
     let data: any = null
     try {
       data = await res.json()
@@ -249,30 +253,30 @@ async function apiFetch<T = any>(
     if (
       res.status === 401 &&
       AuthToken.getRefresh() &&
-      !cleanEndpoint.includes('/accounts/refresh') &&
-      !cleanEndpoint.includes('/accounts/login')
+      !cleanEndpoint.includes( '/accounts/refresh' ) &&
+      !cleanEndpoint.includes( '/accounts/login' )
     ) {
       const refreshResult = await ApiService.refreshToken()
       const newAccess = AuthToken.getAccess()
-      if (refreshResult.ok && newAccess) {
+      if ( refreshResult.ok && newAccess ) {
         const retryHeaders = {
           ...headers,
-          Authorization: `Bearer ${newAccess}`,
+          Authorization: `Bearer ${ newAccess }`,
         }
-        const retryRes = await fetch(targetUrl, { ...options, headers: retryHeaders })
+        const retryRes = await fetch( targetUrl, { ...options, headers: retryHeaders } )
         let retryData: any = null
         try {
           retryData = await retryRes.json()
-        } catch {}
+        } catch { }
 
-        if (retryRes.ok) {
+        if ( retryRes.ok ) {
           return { ok: true, data: retryData, status: retryRes.status }
         }
         return {
           ok: false,
           data: retryData,
           status: retryRes.status,
-          message: parseApiErrorMessage(retryData, retryRes.status),
+          message: parseApiErrorMessage( retryData, retryRes.status ),
           errors: retryData?.errors,
         }
       } else {
@@ -285,13 +289,13 @@ async function apiFetch<T = any>(
       ok: isSuccess,
       data,
       status: res.status,
-      message: isSuccess ? undefined : parseApiErrorMessage(data, res.status),
+      message: isSuccess ? undefined : parseApiErrorMessage( data, res.status ),
       errors: data?.errors,
     }
-  } catch (err: any) {
+  } catch ( err: any ) {
     const isNetworkOrFetchFail =
       err?.message === 'Failed to fetch' ||
-      err?.message?.includes('fetch') ||
+      err?.message?.includes( 'fetch' ) ||
       err?.name === 'TypeError'
 
     return {
@@ -304,7 +308,7 @@ async function apiFetch<T = any>(
   }
 }
 
-let projectsData: Project[] = [...DEFAULT_PROJECTS]
+let projectsData: Project[] = [ ...DEFAULT_PROJECTS ]
 let leadsData: Lead[] = []
 
 export const ApiService = {
@@ -313,7 +317,7 @@ export const ApiService = {
   // Health check
   async checkHealth(): Promise<boolean> {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/docs`, { method: 'GET' })
+      const res = await fetch( `${ API_BASE_URL }/api/docs`, { method: 'GET' } )
       return res.status < 500
     } catch {
       return false
@@ -321,62 +325,62 @@ export const ApiService = {
   },
 
   // Auth: Send OTP
-  async sendOtp(mobile: string) {
-    const cleanMobile = mobile.replace(/[^0-9]/g, '').slice(-10)
-    const res = await apiFetch('/api/accounts/send-otp', {
+  async sendOtp( mobile: string ) {
+    const cleanMobile = mobile.replace( /[^0-9]/g, '' ).slice( -10 )
+    const res = await apiFetch( '/api/accounts/send-otp', {
       method: 'POST',
-      body: JSON.stringify({ mobile: cleanMobile }),
-    })
+      body: JSON.stringify( { mobile: cleanMobile } ),
+    } )
     // If send-otp fails for non-validation reasons (e.g. 404/405/502), try resend-otp as fallback
-    if (!res.ok && res.status !== 400 && res.status !== 429 && res.status !== 500) {
-      return apiFetch('/api/accounts/resend-otp', {
+    if ( !res.ok && res.status !== 400 && res.status !== 429 && res.status !== 500 ) {
+      return apiFetch( '/api/accounts/resend-otp', {
         method: 'POST',
-        body: JSON.stringify({ mobile: cleanMobile }),
-      })
+        body: JSON.stringify( { mobile: cleanMobile } ),
+      } )
     }
     return res
   },
 
   // Auth: Resend OTP
-  async resendOtp(mobile: string) {
-    const cleanMobile = mobile.replace(/[^0-9]/g, '').slice(-10)
-    const res = await apiFetch('/api/accounts/resend-otp', {
+  async resendOtp( mobile: string ) {
+    const cleanMobile = mobile.replace( /[^0-9]/g, '' ).slice( -10 )
+    const res = await apiFetch( '/api/accounts/resend-otp', {
       method: 'POST',
-      body: JSON.stringify({ mobile: cleanMobile }),
-    })
+      body: JSON.stringify( { mobile: cleanMobile } ),
+    } )
     // If resend-otp endpoint fails for any network/server error other than rate limit or validation, try send-otp
-    if (!res.ok && res.status !== 429 && res.status !== 400) {
-      return apiFetch('/api/accounts/send-otp', {
+    if ( !res.ok && res.status !== 429 && res.status !== 400 ) {
+      return apiFetch( '/api/accounts/send-otp', {
         method: 'POST',
-        body: JSON.stringify({ mobile: cleanMobile }),
-      })
+        body: JSON.stringify( { mobile: cleanMobile } ),
+      } )
     }
     return res
   },
 
   // Auth: Verify OTP
-  async verifyOtp(mobile: string, otp: string) {
-    const cleanMobile = mobile.replace(/[^0-9]/g, '').slice(-10)
-    return apiFetch('/api/accounts/verify-otp', {
+  async verifyOtp( mobile: string, otp: string ) {
+    const cleanMobile = mobile.replace( /[^0-9]/g, '' ).slice( -10 )
+    return apiFetch( '/api/accounts/verify-otp', {
       method: 'POST',
-      body: JSON.stringify({ mobile: cleanMobile, otp: otp.trim() }),
-    })
+      body: JSON.stringify( { mobile: cleanMobile, otp: otp.trim() } ),
+    } )
   },
 
   // Auth: Register
-  async register(params: {
+  async register( params: {
     mobile: string
     email: string
     password: string
     first_name: string
     last_name: string
-  }) {
-    const res = await apiFetch('/api/accounts/register', {
+  } ) {
+    const res = await apiFetch( '/api/accounts/register', {
       method: 'POST',
-      body: JSON.stringify(params),
-    })
+      body: JSON.stringify( params ),
+    } )
 
-    if (res.ok && res.data) {
+    if ( res.ok && res.data ) {
       const d = res.data.data || res.data
       const accessToken =
         d.access_token ||
@@ -394,18 +398,18 @@ export const ApiService = {
         d.tokens?.refresh
       const user = d.user || res.data.user
 
-      if (accessToken) AuthToken.setAccess(accessToken)
-      if (refreshToken) AuthToken.setRefresh(refreshToken)
-      if (user) AuthToken.setUser(user)
+      if ( accessToken ) AuthToken.setAccess( accessToken )
+      if ( refreshToken ) AuthToken.setRefresh( refreshToken )
+      if ( user ) AuthToken.setUser( user )
     }
 
     return res
   },
 
   // Auth: Login
-  async login(emailOrMobile: string, password: string) {
-    const isEmail = emailOrMobile.includes('@')
-    const cleanMobile = !isEmail ? emailOrMobile.replace(/[^0-9]/g, '').slice(-10) : emailOrMobile
+  async login( emailOrMobile: string, password: string ) {
+    const isEmail = emailOrMobile.includes( '@' )
+    const cleanMobile = !isEmail ? emailOrMobile.replace( /[^0-9]/g, '' ).slice( -10 ) : emailOrMobile
 
     const payload: any = {
       username: emailOrMobile.trim(),
@@ -414,12 +418,12 @@ export const ApiService = {
       password,
     }
 
-    const res = await apiFetch('/api/accounts/login', {
+    const res = await apiFetch( '/api/accounts/login', {
       method: 'POST',
-      body: JSON.stringify(payload),
-    })
+      body: JSON.stringify( payload ),
+    } )
 
-    if (res.status === 500) {
+    if ( res.status === 500 ) {
       return {
         ok: false,
         status: 500,
@@ -430,7 +434,7 @@ export const ApiService = {
       }
     }
 
-    if (res.ok && res.data) {
+    if ( res.ok && res.data ) {
       const d = res.data.data || res.data
       const accessToken =
         d.access_token ||
@@ -448,9 +452,9 @@ export const ApiService = {
         d.tokens?.refresh
       const user = d.user || res.data.user
 
-      if (accessToken) AuthToken.setAccess(accessToken)
-      if (refreshToken) AuthToken.setRefresh(refreshToken)
-      if (user) AuthToken.setUser(user)
+      if ( accessToken ) AuthToken.setAccess( accessToken )
+      if ( refreshToken ) AuthToken.setRefresh( refreshToken )
+      if ( user ) AuthToken.setUser( user )
     }
 
     return res
@@ -459,12 +463,12 @@ export const ApiService = {
   // Auth: Refresh Token (POST /api/accounts/refresh)
   async refreshToken(): Promise<{ ok: boolean; status: number; data?: { access_token: string } }> {
     const refreshToken = AuthToken.getRefresh()
-    if (!refreshToken) return { ok: false, status: 401 }
+    if ( !refreshToken ) return { ok: false, status: 401 }
 
-    const res = await apiFetch<any>('/api/accounts/refresh', {
+    const res = await apiFetch<any>( '/api/accounts/refresh', {
       method: 'POST',
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    })
+      body: JSON.stringify( { refresh_token: refreshToken } ),
+    } )
 
     const newAccess =
       res.data?.access_token ||
@@ -472,8 +476,8 @@ export const ApiService = {
       res.data?.data?.access_token ||
       res.data?.data?.access
 
-    if (res.ok && newAccess) {
-      AuthToken.setAccess(newAccess)
+    if ( res.ok && newAccess ) {
+      AuthToken.setAccess( newAccess )
       return { ok: true, data: { access_token: newAccess }, status: res.status }
     }
 
@@ -482,16 +486,16 @@ export const ApiService = {
 
   // Auth: Current User Me
   async getMe() {
-    const res = await apiFetch<any>('/api/accounts/me')
-    if (res.ok && res.data) {
+    const res = await apiFetch<any>( '/api/accounts/me' )
+    if ( res.ok && res.data ) {
       const user = res.data?.data || res.data?.user || res.data
       const name =
         user.full_name ||
         user.name ||
-        `${user.first_name || ''} ${user.last_name || ''}`.trim()
-      if (name && !name.includes('@')) {
-        localStorage.setItem('maytri_profile_name', name)
-        localStorage.setItem('maytri_last_user_name', name)
+        `${ user.first_name || '' } ${ user.last_name || '' }`.trim()
+      if ( name && !name.includes( '@' ) ) {
+        localStorage.setItem( 'maytri_profile_name', name )
+        localStorage.setItem( 'maytri_last_user_name', name )
       }
       return {
         ...res,
@@ -502,40 +506,40 @@ export const ApiService = {
   },
 
   // Auth: Forgot Password (POST /api/accounts/forgot-password)
-  async forgotPassword(email: string) {
-    return apiFetch('/api/accounts/forgot-password', {
+  async forgotPassword( email: string ) {
+    return apiFetch( '/api/accounts/forgot-password', {
       method: 'POST',
-      body: JSON.stringify({ email: email.trim() }),
-    })
+      body: JSON.stringify( { email: email.trim() } ),
+    } )
   },
 
   // Auth: Verify Reset OTP (POST /api/accounts/verify-reset-otp)
-  async verifyResetOtp(email: string, otp: string) {
-    return apiFetch('/api/accounts/verify-reset-otp', {
+  async verifyResetOtp( email: string, otp: string ) {
+    return apiFetch( '/api/accounts/verify-reset-otp', {
       method: 'POST',
-      body: JSON.stringify({ email: email.trim(), otp: otp.trim() }),
-    })
+      body: JSON.stringify( { email: email.trim(), otp: otp.trim() } ),
+    } )
   },
 
   // Auth: Reset Password (POST /api/accounts/reset-password)
-  async resetPassword(reset_token: string, new_password: string, confirm_password: string) {
-    return apiFetch('/api/accounts/reset-password', {
+  async resetPassword( reset_token: string, new_password: string, confirm_password: string ) {
+    return apiFetch( '/api/accounts/reset-password', {
       method: 'POST',
-      body: JSON.stringify({ reset_token, new_password, confirm_password }),
-    })
+      body: JSON.stringify( { reset_token, new_password, confirm_password } ),
+    } )
   },
 
   // Auth: Logout (POST /api/accounts/logout)
   async logout() {
     const refreshToken = AuthToken.getRefresh()
-    if (refreshToken) {
+    if ( refreshToken ) {
       try {
-        await apiFetch('/api/accounts/logout', {
+        await apiFetch( '/api/accounts/logout', {
           method: 'POST',
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        })
-      } catch (e) {
-        console.warn('Logout API network notice:', e)
+          body: JSON.stringify( { refresh_token: refreshToken } ),
+        } )
+      } catch ( e ) {
+        console.warn( 'Logout API network notice:', e )
       }
     }
 
@@ -546,23 +550,23 @@ export const ApiService = {
 
   // Partners: Profile
   async getPartnerProfile() {
-    const res = await apiFetch<any>('/api/partners/profile')
-    if (res.ok && res.data) {
+    const res = await apiFetch<any>( '/api/partners/profile' )
+    if ( res.ok && res.data ) {
       const unwrapped = res.data?.data || res.data?.profile || res.data
       const name =
         unwrapped.full_name ||
-        `${unwrapped.user?.first_name || ''} ${unwrapped.user?.last_name || ''}`.trim() ||
+        `${ unwrapped.user?.first_name || '' } ${ unwrapped.user?.last_name || '' }`.trim() ||
         unwrapped.company_name ||
         ''
-      if (name) {
-        localStorage.setItem('maytri_profile_name', name)
-        localStorage.setItem('maytri_last_user_name', name)
+      if ( name ) {
+        localStorage.setItem( 'maytri_profile_name', name )
+        localStorage.setItem( 'maytri_last_user_name', name )
       }
-      if (unwrapped.partner_code) {
-        localStorage.setItem('maytri_profile_code', unwrapped.partner_code)
+      if ( unwrapped.partner_code ) {
+        localStorage.setItem( 'maytri_profile_code', unwrapped.partner_code )
       }
-      if (unwrapped.partner_type) {
-        localStorage.setItem('maytri_profile_designation', unwrapped.partner_type)
+      if ( unwrapped.partner_type ) {
+        localStorage.setItem( 'maytri_profile_designation', unwrapped.partner_type )
       }
       return {
         ...res,
@@ -573,121 +577,121 @@ export const ApiService = {
   },
 
   // Partners: Submit KYC
-  async submitKYC(formData: FormData) {
-    return apiFetch('/api/partners/kyc', {
+  async submitKYC( formData: FormData ) {
+    return apiFetch( '/api/partners/kyc', {
       method: 'POST',
       body: formData,
-    })
+    } )
   },
 
   // Partners: Approve
-  async approvePartner(partnerId: number) {
-    return apiFetch(`/api/partners/${partnerId}/approve`, {
+  async approvePartner( partnerId: number ) {
+    return apiFetch( `/api/partners/${ partnerId }/approve`, {
       method: 'POST',
-    })
+    } )
   },
 
   // Partners: Reject
-  async rejectPartner(partnerId: number) {
-    return apiFetch(`/api/partners/${partnerId}/reject`, {
+  async rejectPartner( partnerId: number ) {
+    return apiFetch( `/api/partners/${ partnerId }/reject`, {
       method: 'POST',
-    })
+    } )
   },
 
   // Partners: Tree
   async getPartnerTree() {
-    return apiFetch('/api/partners/tree')
+    return apiFetch( '/api/partners/tree' )
   },
 
   // Partners: My Team
   async getMyTeam() {
-    return apiFetch('/api/partners/my-team')
+    return apiFetch( '/api/partners/my-team' )
   },
 
   // Projects: List
-  async getProjects(params?: {
+  async getProjects( params?: {
     q?: string
     status?: string
     city?: string
     is_active?: boolean
     page?: number
     page_size?: number
-  }): Promise<Project[]> {
+  } ): Promise<Project[]> {
     const query = new URLSearchParams()
-    if (params?.q) query.set('q', params.q)
-    if (params?.status) query.set('status', params.status)
-    if (params?.city) query.set('city', params.city)
-    if (params?.is_active !== undefined) query.set('is_active', String(params.is_active))
-    if (params?.page) query.set('page', String(params.page))
-    if (params?.page_size) query.set('page_size', String(params.page_size))
+    if ( params?.q ) query.set( 'q', params.q )
+    if ( params?.status ) query.set( 'status', params.status )
+    if ( params?.city ) query.set( 'city', params.city )
+    if ( params?.is_active !== undefined ) query.set( 'is_active', String( params.is_active ) )
+    if ( params?.page ) query.set( 'page', String( params.page ) )
+    if ( params?.page_size ) query.set( 'page_size', String( params.page_size ) )
 
-    const qs = query.toString() ? `?${query.toString()}` : ''
-    const res = await apiFetch<any>(`/api/projects/${qs}`)
+    const qs = query.toString() ? `?${ query.toString() }` : ''
+    const res = await apiFetch<any>( `/api/projects/${ qs }` )
 
     const items: BackendProject[] =
       res.data?.items ||
       res.data?.results ||
       res.data?.data?.items ||
       res.data?.data?.results ||
-      (Array.isArray(res.data?.data) ? res.data.data : null) ||
-      (Array.isArray(res.data) ? res.data : [])
+      ( Array.isArray( res.data?.data ) ? res.data.data : null ) ||
+      ( Array.isArray( res.data ) ? res.data : [] )
 
-    if (res.ok && Array.isArray(items) && items.length > 0) {
-      const mapped = items.map((p) => {
-        const thumbUrl = p.thumbnail ? getFullMediaUrl(p.thumbnail) : null
+    if ( res.ok && Array.isArray( items ) && items.length > 0 ) {
+      const mapped = items.map( ( p ) => {
+        const thumbUrl = p.thumbnail ? getFullMediaUrl( p.thumbnail ) : null
         return {
-          id: String(p.id),
+          id: String( p.id ),
           rawId: p.id,
           name: p.title,
-          location: `${p.location || ''}, ${p.city || ''}`.replace(/^,\s*/, '').trim(),
+          location: `${ p.location || '' }, ${ p.city || '' }`.replace( /^,\s*/, '' ).trim(),
           city: p.city || '',
           state: p.state || '',
           pincode: p.pincode || '',
-          status: (p.status || 'Ongoing') as any,
+          status: ( p.status || 'Ongoing' ) as any,
           thumbnail: thumbUrl,
           image: thumbUrl || '',
           description: p.description || null,
-          brochure: p.brochure ? getFullMediaUrl(p.brochure) : null,
+          brochure: p.brochure ? getFullMediaUrl( p.brochure ) : null,
           reraNumber: p.rera_number || null,
           developerName: p.developer_name || null,
           startDate: p.start_date || null,
           completionDate: p.completion_date || null,
-          projectCode: p.project_code || `MAY-${p.id}`,
+          projectCode: p.project_code || `MAY-${ p.id }`,
           slug: p.slug || '',
           isActive: p.is_active !== false,
           media:
-            p.media && Array.isArray(p.media)
-              ? p.media.map((m) => ({
+            p.media && Array.isArray( p.media )
+              ? p.media.map( ( m ) => ( {
                 ...m,
-                file_url: getFullMediaUrl(m.file_url),
-              }))
+                file_url: getFullMediaUrl( m.file_url ),
+              } ) )
               : [],
           createdAt: p.created_at,
           updatedAt: p.updated_at,
         }
-      })
+      } )
       projectsData = mapped
       return mapped
     }
 
-    return projectsData && projectsData.length > 0 ? [...projectsData] : [...DEFAULT_PROJECTS]
+    return projectsData && projectsData.length > 0 ? [ ...projectsData ] : [ ...DEFAULT_PROJECTS ]
   },
 
   // Projects: Detail
-  async getProject(projectId: number) {
-    const res = await apiFetch<any>(`/api/projects/${projectId}/`)
-    if (res.ok && res.data) {
+  async getProject( projectId: number ) {
+    const res = await apiFetch<any>( `/api/projects/${ projectId }/` )
+    if ( res.ok && res.data ) {
       const p: BackendProject = res.data.data || res.data
       return {
         ...res,
         data: {
           ...p,
-          thumbnail: getFullMediaUrl(p.thumbnail),
-          brochure: getFullMediaUrl(p.brochure),
-          media: (p.media || []).map((m) => ({
+          thumbnail: getFullMediaUrl( p.thumbnail ),
+          brochure: getFullMediaUrl( p.brochure ),
+          media: ( p.media || [] ).map( ( m ) => ( {
             ...m,
-            file_url: getFullMediaUrl(m.file_url),
-          })),
+            file_url: getFullMediaUrl( m.file_url ),
+          } ) ),
         },
       }
     }
@@ -695,33 +699,33 @@ export const ApiService = {
   },
 
   // Helper to convert frontend lead stage to backend status choices
-  toBackendStatus(stage?: string): string {
-    if (!stage) return 'NEW'
-    const s = stage.toLowerCase().trim().replace(/[\s_-]+/g, '')
-    if (s.includes('new') || s.includes('inquiry') || s.includes('fresh')) return 'NEW'
-    if (s.includes('contact') || s.includes('called')) return 'CONTACTED'
-    if (s.includes('follow') || s.includes('visit') || s.includes('tour')) return 'FOLLOW_UP'
-    if (s.includes('interest') || s.includes('negotiat') || s.includes('token') || s.includes('loan')) return 'INTERESTED'
-    if (s.includes('convert') || s.includes('book') || s.includes('won')) return 'CONVERTED'
-    if (s.includes('lost') || s.includes('reject') || s.includes('drop')) return 'LOST'
-    return stage.toUpperCase().replace(/\s+/g, '_')
+  toBackendStatus( stage?: string ): string {
+    if ( !stage ) return 'NEW'
+    const s = stage.toLowerCase().trim().replace( /[\s_-]+/g, '' )
+    if ( s.includes( 'new' ) || s.includes( 'inquiry' ) || s.includes( 'fresh' ) ) return 'NEW'
+    if ( s.includes( 'contact' ) || s.includes( 'called' ) ) return 'CONTACTED'
+    if ( s.includes( 'follow' ) || s.includes( 'visit' ) || s.includes( 'tour' ) ) return 'FOLLOW_UP'
+    if ( s.includes( 'interest' ) || s.includes( 'negotiat' ) || s.includes( 'token' ) || s.includes( 'loan' ) ) return 'INTERESTED'
+    if ( s.includes( 'convert' ) || s.includes( 'book' ) || s.includes( 'won' ) ) return 'CONVERTED'
+    if ( s.includes( 'lost' ) || s.includes( 'reject' ) || s.includes( 'drop' ) ) return 'LOST'
+    return stage.toUpperCase().replace( /\s+/g, '_' )
   },
 
   // Helper to normalize lead stage string from backend
-  normalizeLeadStage(rawStatus?: string): Lead['stage'] {
-    if (!rawStatus) return 'New'
-    const s = rawStatus.toLowerCase().trim().replace(/[\s_-]+/g, '')
-    if (s.includes('new') || s.includes('inquiry') || s.includes('fresh') || s.includes('uncontacted')) return 'New'
-    if (s.includes('contact') || s.includes('called')) return 'Contacted'
-    if (s.includes('follow') || s.includes('visit') || s.includes('tour')) return 'Follow Up'
-    if (s.includes('interest') || s.includes('negotiat') || s.includes('token') || s.includes('loan')) return 'Interested'
-    if (s.includes('convert') || s.includes('book') || s.includes('won')) return 'Converted'
-    if (s.includes('lost') || s.includes('last') || s.includes('reject') || s.includes('drop')) return 'Lost'
-    return rawStatus as Lead['stage']
+  normalizeLeadStage( rawStatus?: string ): Lead[ 'stage' ] {
+    if ( !rawStatus ) return 'New'
+    const s = rawStatus.toLowerCase().trim().replace( /[\s_-]+/g, '' )
+    if ( s.includes( 'new' ) || s.includes( 'inquiry' ) || s.includes( 'fresh' ) || s.includes( 'uncontacted' ) ) return 'New'
+    if ( s.includes( 'contact' ) || s.includes( 'called' ) ) return 'Contacted'
+    if ( s.includes( 'follow' ) || s.includes( 'visit' ) || s.includes( 'tour' ) ) return 'Follow Up'
+    if ( s.includes( 'interest' ) || s.includes( 'negotiat' ) || s.includes( 'token' ) || s.includes( 'loan' ) ) return 'Interested'
+    if ( s.includes( 'convert' ) || s.includes( 'book' ) || s.includes( 'won' ) ) return 'Converted'
+    if ( s.includes( 'lost' ) || s.includes( 'last' ) || s.includes( 'reject' ) || s.includes( 'drop' ) ) return 'Lost'
+    return rawStatus as Lead[ 'stage' ]
   },
 
   // Leads: List
-  async getLeads(params?: {
+  async getLeads( params?: {
     q?: string
     status?: string
     project_id?: number
@@ -729,57 +733,57 @@ export const ApiService = {
     partner_id?: number
     page?: number
     page_size?: number
-  }): Promise<Lead[]> {
+  } ): Promise<Lead[]> {
     const query = new URLSearchParams()
-    if (params?.q) query.set('q', params.q)
-    if (params?.status) query.set('status', params.status)
-    if (params?.project_id) query.set('project_id', String(params.project_id))
-    if (params?.city) query.set('city', params.city)
-    if (params?.partner_id) query.set('partner_id', String(params.partner_id))
-    if (params?.page) query.set('page', String(params.page))
-    if (params?.page_size) query.set('page_size', String(params.page_size))
+    if ( params?.q ) query.set( 'q', params.q )
+    if ( params?.status ) query.set( 'status', params.status )
+    if ( params?.project_id ) query.set( 'project_id', String( params.project_id ) )
+    if ( params?.city ) query.set( 'city', params.city )
+    if ( params?.partner_id ) query.set( 'partner_id', String( params.partner_id ) )
+    if ( params?.page ) query.set( 'page', String( params.page ) )
+    if ( params?.page_size ) query.set( 'page_size', String( params.page_size ) )
 
-    const qs = query.toString() ? `?${query.toString()}` : ''
-    const res = await apiFetch<any>(`/api/leads/${qs}`)
+    const qs = query.toString() ? `?${ query.toString() }` : ''
+    const res = await apiFetch<any>( `/api/leads/${ qs }` )
 
     const items: BackendLead[] =
       res.data?.items ||
       res.data?.results ||
       res.data?.data?.items ||
       res.data?.data?.results ||
-      (Array.isArray(res.data?.data) ? res.data.data : null) ||
-      (Array.isArray(res.data) ? res.data : [])
+      ( Array.isArray( res.data?.data ) ? res.data.data : null ) ||
+      ( Array.isArray( res.data ) ? res.data : [] )
 
-    if (res.ok && Array.isArray(items)) {
-      const mapped = items.map((l) => {
+    if ( res.ok && Array.isArray( items ) ) {
+      const mapped = items.map( ( l ) => {
         const creatorName = l.created_by
-          ? `${l.created_by.first_name || ''} ${l.created_by.last_name || ''}`.trim() || l.created_by.email
+          ? `${ l.created_by.first_name || '' } ${ l.created_by.last_name || '' }`.trim() || l.created_by.email
           : ''
         const assigneeName = l.assigned_to
-          ? `${l.assigned_to.first_name || ''} ${l.assigned_to.last_name || ''}`.trim() || l.assigned_to.email
+          ? `${ l.assigned_to.first_name || '' } ${ l.assigned_to.last_name || '' }`.trim() || l.assigned_to.email
           : ''
 
-        const formatDateTime = (dateStr?: string | null) => {
-          if (!dateStr) return '-'
+        const formatDateTime = ( dateStr?: string | null ) => {
+          if ( !dateStr ) return '-'
           try {
-            const d = new Date(dateStr)
-            if (isNaN(d.getTime())) return dateStr
-            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-            const month = months[d.getMonth()]
-            const day = String(d.getDate()).padStart(2, '0')
+            const d = new Date( dateStr )
+            if ( isNaN( d.getTime() ) ) return dateStr
+            const months = [ 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec' ]
+            const month = months[ d.getMonth() ]
+            const day = String( d.getDate() ).padStart( 2, '0' )
             const year = d.getFullYear()
-            const hours = String(d.getHours()).padStart(2, '0')
-            const minutes = String(d.getMinutes()).padStart(2, '0')
-            return `${month} ${day}, ${year} ${hours}:${minutes}`
+            const hours = String( d.getHours() ).padStart( 2, '0' )
+            const minutes = String( d.getMinutes() ).padStart( 2, '0' )
+            return `${ month } ${ day }, ${ year } ${ hours }:${ minutes }`
           } catch {
             return dateStr
           }
         }
 
-        const rawBackendStage = this.normalizeLeadStage(l.status)
+        const rawBackendStage = this.normalizeLeadStage( l.status )
 
         return {
-          id: `LD-${l.id}`,
+          id: `LD-${ l.id }`,
           rawId: l.id,
           name: l.customer_name || 'Buyer',
           phone: l.mobile || '',
@@ -787,7 +791,7 @@ export const ApiService = {
           city: l.city || '',
           project: l.project?.title || '',
           project_id: l.project?.id,
-          partner_id: l.created_by?.id || (l as any).partner_id,
+          partner_id: l.created_by?.id || ( l as any ).partner_id,
           created_by_id: l.created_by?.id,
           unitType: l.requirement || '',
           requirement: l.requirement || '',
@@ -796,46 +800,46 @@ export const ApiService = {
           source: creatorName || '',
           assignedTo: assigneeName || '',
           notes: l.requirement || '',
-          createdDate: l.created_at ? l.created_at.split('T')[0] : '',
+          createdDate: l.created_at ? l.created_at.split( 'T' )[ 0 ] : '',
           follow_up_date: l.follow_up_date
-            ? formatDateTime(l.follow_up_date)
+            ? formatDateTime( l.follow_up_date )
             : l.created_at
-              ? formatDateTime(l.created_at)
+              ? formatDateTime( l.created_at )
               : '-',
           lastActivity: l.follow_up_date
-            ? `Follow-up: ${l.follow_up_date.split('T')[0]}`
+            ? `Follow-up: ${ l.follow_up_date.split( 'T' )[ 0 ] }`
             : l.updated_at
-              ? `Updated: ${l.updated_at.split('T')[0]}`
+              ? `Updated: ${ l.updated_at.split( 'T' )[ 0 ] }`
               : '',
         }
-      })
+      } )
 
       leadsData = mapped
       return mapped
     }
 
-    return [...leadsData]
+    return [ ...leadsData ]
   },
 
   // Leads: Detail (GET /api/leads/{lead_id}/)
-  async getLead(leadId: number | string): Promise<{ ok: boolean; data?: Lead; status: number; message?: string }> {
-    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-    if (!numericId || isNaN(numericId)) {
+  async getLead( leadId: number | string ): Promise<{ ok: boolean; data?: Lead; status: number; message?: string }> {
+    const numericId = typeof leadId === 'number' ? leadId : Number( String( leadId ).replace( /\D/g, '' ) )
+    if ( !numericId || isNaN( numericId ) ) {
       return { ok: false, status: 400, message: 'Invalid lead ID' }
     }
 
-    const res = await apiFetch<any>(`/api/leads/${numericId}/`)
-    if (res.ok && res.data) {
+    const res = await apiFetch<any>( `/api/leads/${ numericId }/` )
+    if ( res.ok && res.data ) {
       const l: BackendLead = res.data?.data || res.data
       const creatorName = l.created_by
-        ? `${l.created_by.first_name || ''} ${l.created_by.last_name || ''}`.trim() || l.created_by.email
+        ? `${ l.created_by.first_name || '' } ${ l.created_by.last_name || '' }`.trim() || l.created_by.email
         : ''
       const assigneeName = l.assigned_to
-        ? `${l.assigned_to.first_name || ''} ${l.assigned_to.last_name || ''}`.trim() || l.assigned_to.email
+        ? `${ l.assigned_to.first_name || '' } ${ l.assigned_to.last_name || '' }`.trim() || l.assigned_to.email
         : ''
 
       const mapped: Lead = {
-        id: `LD-${l.id}`,
+        id: `LD-${ l.id }`,
         rawId: l.id,
         name: l.customer_name || 'Buyer',
         phone: l.mobile || '',
@@ -843,18 +847,18 @@ export const ApiService = {
         city: l.city || '',
         project: l.project?.title || '',
         project_id: l.project?.id,
-        partner_id: l.created_by?.id || (l as any).partner_id,
+        partner_id: l.created_by?.id || ( l as any ).partner_id,
         created_by_id: l.created_by?.id,
         unitType: l.requirement || '',
         requirement: l.requirement || '',
         budget: '',
-        stage: this.normalizeLeadStage(l.status),
+        stage: this.normalizeLeadStage( l.status ),
         source: creatorName || '',
         assignedTo: assigneeName || '',
         notes: l.requirement || '',
-        createdDate: l.created_at ? l.created_at.split('T')[0] : '',
+        createdDate: l.created_at ? l.created_at.split( 'T' )[ 0 ] : '',
         follow_up_date: l.follow_up_date || l.created_at || '-',
-        lastActivity: l.updated_at ? `Updated: ${l.updated_at.split('T')[0]}` : '',
+        lastActivity: l.updated_at ? `Updated: ${ l.updated_at.split( 'T' )[ 0 ] }` : '',
       }
 
       return { ok: true, data: mapped, status: res.status }
@@ -864,7 +868,7 @@ export const ApiService = {
   },
 
   // Leads: Create (POST /api/leads/)
-  async createLead(newLeadData: {
+  async createLead( newLeadData: {
     customer_name?: string
     mobile?: string
     email?: string
@@ -881,46 +885,46 @@ export const ApiService = {
     source?: string
     notes?: string
     assignedTo?: string
-  }): Promise<{ ok: boolean; data?: Lead; error?: string; status?: number }> {
+  } ): Promise<{ ok: boolean; data?: Lead; error?: string; status?: number }> {
     const rawMobile = newLeadData.mobile || newLeadData.phone || ''
-    const cleanMobile = rawMobile.replace(/[^0-9]/g, '').slice(-10) || '9876543210'
+    const cleanMobile = rawMobile.replace( /[^0-9]/g, '' ).slice( -10 ) || '9876543210'
 
     const payload: Record<string, any> = {
-      customer_name: (newLeadData.customer_name || newLeadData.name || 'New Customer').trim(),
+      customer_name: ( newLeadData.customer_name || newLeadData.name || 'New Customer' ).trim(),
       mobile: cleanMobile,
-      project_id: Number(newLeadData.project_id) || 1,
+      project_id: Number( newLeadData.project_id ) || 1,
     }
 
-    if (newLeadData.city?.trim()) {
+    if ( newLeadData.city?.trim() ) {
       payload.city = newLeadData.city.trim()
     }
-    if (newLeadData.email?.trim()) {
+    if ( newLeadData.email?.trim() ) {
       payload.email = newLeadData.email.trim()
     }
 
-    const reqText = (newLeadData.requirement || newLeadData.notes || newLeadData.unitType || '').trim()
-    if (reqText) {
+    const reqText = ( newLeadData.requirement || newLeadData.notes || newLeadData.unitType || '' ).trim()
+    if ( reqText ) {
       payload.requirement = reqText
     }
 
-    if (newLeadData.follow_up_date) {
+    if ( newLeadData.follow_up_date ) {
       try {
-        const d = new Date(newLeadData.follow_up_date)
-        payload.follow_up_date = !isNaN(d.getTime()) ? d.toISOString() : newLeadData.follow_up_date
+        const d = new Date( newLeadData.follow_up_date )
+        payload.follow_up_date = !isNaN( d.getTime() ) ? d.toISOString() : newLeadData.follow_up_date
       } catch {
         payload.follow_up_date = newLeadData.follow_up_date
       }
     }
 
-    const res = await apiFetch<BackendLead>('/api/leads/', {
+    const res = await apiFetch<BackendLead>( '/api/leads/', {
       method: 'POST',
-      body: JSON.stringify(payload),
-    })
+      body: JSON.stringify( payload ),
+    } )
 
-    if (res.ok && res.data) {
+    if ( res.ok && res.data ) {
       const created = res.data
       const createdLead: Lead = {
-        id: `LD-${created.id}`,
+        id: `LD-${ created.id }`,
         rawId: created.id,
         name: created.customer_name || payload.customer_name,
         phone: created.mobile || payload.mobile,
@@ -928,15 +932,15 @@ export const ApiService = {
         project: created.project?.title || newLeadData.project || 'Project',
         unitType: newLeadData.unitType || '3 BHK',
         budget: newLeadData.budget || '₹ 1.2 - 1.5 Cr',
-        stage: this.normalizeLeadStage(created.status),
+        stage: this.normalizeLeadStage( created.status ),
         source: newLeadData.source || 'Channel Partner',
-        assignedTo: created.assigned_to ? `${created.assigned_to.first_name} ${created.assigned_to.last_name}` : 'Unassigned',
+        assignedTo: created.assigned_to ? `${ created.assigned_to.first_name } ${ created.assigned_to.last_name }` : 'Unassigned',
         notes: created.requirement || '',
-        createdDate: created.created_at ? created.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+        createdDate: created.created_at ? created.created_at.split( 'T' )[ 0 ] : new Date().toISOString().split( 'T' )[ 0 ],
         lastActivity: 'Lead registered in backend database',
       }
 
-      leadsData = [createdLead, ...leadsData.filter((l) => l.rawId !== createdLead.rawId)]
+      leadsData = [ createdLead, ...leadsData.filter( ( l ) => l.rawId !== createdLead.rawId ) ]
       return { ok: true, data: createdLead, status: res.status }
     }
 
@@ -944,7 +948,7 @@ export const ApiService = {
   },
 
   // Leads: Update (PATCH /api/leads/{lead_id}/)
-  async updateLead(leadId: number | string, updateData: {
+  async updateLead( leadId: number | string, updateData: {
     customer_name?: string
     mobile?: string
     email?: string
@@ -952,25 +956,25 @@ export const ApiService = {
     requirement?: string
     status?: string
     follow_up_date?: string
-  }): Promise<{ ok: boolean; data?: Lead; status: number; message?: string; errors?: any }> {
-    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-    if (!numericId || isNaN(numericId)) {
+  } ): Promise<{ ok: boolean; data?: Lead; status: number; message?: string; errors?: any }> {
+    const numericId = typeof leadId === 'number' ? leadId : Number( String( leadId ).replace( /\D/g, '' ) )
+    if ( !numericId || isNaN( numericId ) ) {
       return { ok: false, status: 400, message: 'Invalid lead ID for update' }
     }
 
     // Prepare LeadUpdateSchema payload as defined in Swagger
     const payload: Record<string, any> = {}
-    if (updateData.customer_name !== undefined) payload.customer_name = updateData.customer_name?.trim() || null
-    if (updateData.mobile !== undefined) payload.mobile = updateData.mobile?.replace(/[^0-9]/g, '').slice(-10) || null
-    if (updateData.email !== undefined) payload.email = updateData.email?.trim() || null
-    if (updateData.city !== undefined) payload.city = updateData.city?.trim() || null
-    if (updateData.requirement !== undefined) payload.requirement = updateData.requirement?.trim() || null
-    if (updateData.status !== undefined) payload.status = this.toBackendStatus(updateData.status)
-    if (updateData.follow_up_date !== undefined) {
-      if (updateData.follow_up_date) {
+    if ( updateData.customer_name !== undefined ) payload.customer_name = updateData.customer_name?.trim() || null
+    if ( updateData.mobile !== undefined ) payload.mobile = updateData.mobile?.replace( /[^0-9]/g, '' ).slice( -10 ) || null
+    if ( updateData.email !== undefined ) payload.email = updateData.email?.trim() || null
+    if ( updateData.city !== undefined ) payload.city = updateData.city?.trim() || null
+    if ( updateData.requirement !== undefined ) payload.requirement = updateData.requirement?.trim() || null
+    if ( updateData.status !== undefined ) payload.status = this.toBackendStatus( updateData.status )
+    if ( updateData.follow_up_date !== undefined ) {
+      if ( updateData.follow_up_date ) {
         try {
-          const d = new Date(updateData.follow_up_date)
-          payload.follow_up_date = !isNaN(d.getTime()) ? d.toISOString() : updateData.follow_up_date
+          const d = new Date( updateData.follow_up_date )
+          payload.follow_up_date = !isNaN( d.getTime() ) ? d.toISOString() : updateData.follow_up_date
         } catch {
           payload.follow_up_date = updateData.follow_up_date
         }
@@ -980,16 +984,16 @@ export const ApiService = {
     }
 
     // Call PATCH /api/leads/{lead_id}/
-    const res = await apiFetch<any>(`/api/leads/${numericId}/`, {
+    const res = await apiFetch<any>( `/api/leads/${ numericId }/`, {
       method: 'PATCH',
-      body: JSON.stringify(payload),
-    })
+      body: JSON.stringify( payload ),
+    } )
 
-    if (res.ok) {
+    if ( res.ok ) {
       // Re-fetch lead from backend to ensure state matches the database exactly
-      const fetched = await this.getLead(numericId)
-      if (fetched.ok && fetched.data) {
-        leadsData = leadsData.map((l) => (l.rawId === numericId || l.id === `LD-${numericId}` ? fetched.data! : l))
+      const fetched = await this.getLead( numericId )
+      if ( fetched.ok && fetched.data ) {
+        leadsData = leadsData.map( ( l ) => ( l.rawId === numericId || l.id === `LD-${ numericId }` ? fetched.data! : l ) )
         return { ok: true, data: fetched.data, status: res.status }
       }
       return { ok: true, status: res.status, message: 'Lead updated successfully in database' }
@@ -1004,20 +1008,20 @@ export const ApiService = {
   },
 
   // Leads: Delete (DELETE /api/leads/{lead_id}/)
-  async deleteLead(leadId: number | string): Promise<{ ok: boolean; status: number; message?: string }> {
-    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-    if (!numericId || isNaN(numericId)) {
+  async deleteLead( leadId: number | string ): Promise<{ ok: boolean; status: number; message?: string }> {
+    const numericId = typeof leadId === 'number' ? leadId : Number( String( leadId ).replace( /\D/g, '' ) )
+    if ( !numericId || isNaN( numericId ) ) {
       return { ok: false, status: 400, message: 'Invalid lead ID for deletion' }
     }
 
     // Call DELETE /api/leads/{lead_id}/ on the live backend
-    const res = await apiFetch<any>(`/api/leads/${numericId}/`, {
+    const res = await apiFetch<any>( `/api/leads/${ numericId }/`, {
       method: 'DELETE',
-    })
+    } )
 
-    if (res.ok) {
+    if ( res.ok ) {
       // Only remove from in-memory cache after backend confirms successful deletion
-      leadsData = leadsData.filter((l) => l.rawId !== numericId && l.id !== `LD-${numericId}` && l.id !== String(leadId))
+      leadsData = leadsData.filter( ( l ) => l.rawId !== numericId && l.id !== `LD-${ numericId }` && l.id !== String( leadId ) )
       return { ok: true, status: res.status, message: 'Lead deleted from database' }
     }
 
@@ -1029,31 +1033,31 @@ export const ApiService = {
   },
 
   // Leads: List Activities (GET /api/leads/{lead_id}/activities/)
-  async getLeadActivities(leadId: number | string, page = 1, pageSize = 50): Promise<{
+  async getLeadActivities( leadId: number | string, page = 1, pageSize = 50 ): Promise<{
     ok: boolean
     data?: { items: BackendLeadActivity[]; count: number }
     status: number
     message?: string
   }> {
-    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-    if (!numericId || isNaN(numericId)) {
+    const numericId = typeof leadId === 'number' ? leadId : Number( String( leadId ).replace( /\D/g, '' ) )
+    if ( !numericId || isNaN( numericId ) ) {
       return { ok: false, status: 400, message: 'Invalid lead ID', data: { items: [], count: 0 } }
     }
 
     const res = await apiFetch<any>(
-      `/api/leads/${numericId}/activities/?page=${page}&page_size=${pageSize}`
+      `/api/leads/${ numericId }/activities/?page=${ page }&page_size=${ pageSize }`
     )
 
-    if (res.ok && res.data) {
+    if ( res.ok && res.data ) {
       const rawList =
         res.data?.items ||
         res.data?.results ||
         res.data?.data?.items ||
         res.data?.data?.results ||
-        (Array.isArray(res.data?.data) ? res.data.data : null) ||
-        (Array.isArray(res.data) ? res.data : [])
+        ( Array.isArray( res.data?.data ) ? res.data.data : null ) ||
+        ( Array.isArray( res.data ) ? res.data : [] )
 
-      const mapped: BackendLeadActivity[] = (Array.isArray(rawList) ? rawList : []).map((a: any) => ({
+      const mapped: BackendLeadActivity[] = ( Array.isArray( rawList ) ? rawList : [] ).map( ( a: any ) => ( {
         id: a.id,
         activity_type: a.activity_type || 'Note',
         description: a.description || '',
@@ -1061,7 +1065,7 @@ export const ApiService = {
         new_status: a.new_status || null,
         performed_by: a.performed_by,
         created_at: a.created_at || new Date().toISOString(),
-      }))
+      } ) )
 
       return {
         ok: true,
@@ -1082,14 +1086,14 @@ export const ApiService = {
   },
 
   // Leads: Add Note / Activity (POST /api/leads/{lead_id}/activities/)
-  async addLeadNote(leadId: number | string, data: { activity_type: string; description: string }): Promise<{
+  async addLeadNote( leadId: number | string, data: { activity_type: string; description: string } ): Promise<{
     ok: boolean
     status: number
     message?: string
     data?: any
   }> {
-    const numericId = typeof leadId === 'number' ? leadId : Number(String(leadId).replace(/\D/g, ''))
-    if (!numericId || isNaN(numericId)) {
+    const numericId = typeof leadId === 'number' ? leadId : Number( String( leadId ).replace( /\D/g, '' ) )
+    if ( !numericId || isNaN( numericId ) ) {
       return { ok: false, status: 400, message: 'Invalid lead ID' }
     }
 
@@ -1098,12 +1102,12 @@ export const ApiService = {
       description: data.description?.trim() || '',
     }
 
-    const res = await apiFetch<any>(`/api/leads/${numericId}/activities/`, {
+    const res = await apiFetch<any>( `/api/leads/${ numericId }/activities/`, {
       method: 'POST',
-      body: JSON.stringify(payload),
-    })
+      body: JSON.stringify( payload ),
+    } )
 
-    if (res.ok) {
+    if ( res.ok ) {
       return { ok: true, status: res.status, data: res.data, message: 'Activity note recorded to database' }
     }
 
@@ -1115,27 +1119,27 @@ export const ApiService = {
   },
 
   // Leads: Assign (POST /api/leads/{lead_id}/assign/)
-  async assignLead(leadId: number, assignedToId: number) {
-    return apiFetch(`/api/leads/${leadId}/assign/`, {
+  async assignLead( leadId: number, assignedToId: number ) {
+    return apiFetch( `/api/leads/${ leadId }/assign/`, {
       method: 'POST',
-      body: JSON.stringify({ assigned_to_id: assignedToId }),
-    })
+      body: JSON.stringify( { assigned_to_id: assignedToId } ),
+    } )
   },
 
   // Leads: Live Dashboard & Pipeline Aggregation Analytics
-  async getLeadsDashboard(params?: LeadDashboardParams) {
+  async getLeadsDashboard( params?: LeadDashboardParams ) {
     const query = new URLSearchParams()
-    if (params?.q) query.set('q', params.q)
-    if (params?.status) query.set('status', params.status)
-    if (params?.project_id) query.set('project_id', String(params.project_id))
-    if (params?.city) query.set('city', params.city)
-    if (params?.partner_id) query.set('partner_id', String(params.partner_id))
-    if (params?.from_date) query.set('from_date', params.from_date)
-    if (params?.to_date) query.set('to_date', params.to_date)
+    if ( params?.q ) query.set( 'q', params.q )
+    if ( params?.status ) query.set( 'status', params.status )
+    if ( params?.project_id ) query.set( 'project_id', String( params.project_id ) )
+    if ( params?.city ) query.set( 'city', params.city )
+    if ( params?.partner_id ) query.set( 'partner_id', String( params.partner_id ) )
+    if ( params?.from_date ) query.set( 'from_date', params.from_date )
+    if ( params?.to_date ) query.set( 'to_date', params.to_date )
 
-    const qs = query.toString() ? `?${query.toString()}` : ''
-    const res = await apiFetch<any>(`/api/leads/dashboard/${qs}`)
-    if (res.ok && res.data) {
+    const qs = query.toString() ? `?${ query.toString() }` : ''
+    const res = await apiFetch<any>( `/api/leads/dashboard/${ qs }` )
+    if ( res.ok && res.data ) {
       const unwrapped: LeadDashboardData = res.data?.data || res.data
       return {
         ...res,
@@ -1172,10 +1176,10 @@ export const ApiService = {
     ]
   },
 
-  async createSiteVisit(newVisitData: Omit<SiteVisit, 'id'>): Promise<SiteVisit> {
+  async createSiteVisit( newVisitData: Omit<SiteVisit, 'id'> ): Promise<SiteVisit> {
     const createdVisit: SiteVisit = {
       ...newVisitData,
-      id: `SV-${Math.floor(500 + Math.random() * 500)}`,
+      id: `SV-${ Math.floor( 500 + Math.random() * 500 ) }`,
     }
     return createdVisit
   },
